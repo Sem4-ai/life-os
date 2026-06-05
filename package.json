@@ -9,6 +9,8 @@
     "task:add": "node scripts/lifeos.mjs task add",
     "task:done": "node scripts/lifeos.mjs task done",
     "today": "node scripts/lifeos.mjs today",
+    "daily": "node scripts/lifeos.mjs daily",
+    "save": "node scripts/lifeos.mjs save",
     "todoist:projects": "node scripts/lifeos.mjs todoist projects",
     "todoist:list": "node scripts/lifeos.mjs todoist list",
     "todoist:pull": "node scripts/lifeos.mjs todoist pull",

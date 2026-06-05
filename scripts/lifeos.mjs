@@ -7,6 +7,7 @@ import { spawn } from 'node:child_process';
 const root = new URL('../', import.meta.url);
 const areasPath = new URL('../areas.md', import.meta.url);
 const inboxPath = new URL('../inbox.md', import.meta.url);
+const projectsPath = new URL('../projects.md', import.meta.url);
 const envPath = new URL('../.env', import.meta.url);
 
 const args = process.argv.slice(2);
@@ -41,6 +42,16 @@ async function main() {
 
   if (domain === 'today') {
     await showToday();
+    return;
+  }
+
+  if (domain === 'daily') {
+    await showDailyReview();
+    return;
+  }
+
+  if (domain === 'save') {
+    await saveChanges(rest.join(' ').trim() || action || 'Update Life OS');
     return;
   }
 
@@ -91,6 +102,8 @@ Commands:
   npm run lifeos -- task add "text"
   npm run lifeos -- task done "text"
   npm run lifeos -- today
+  npm run lifeos -- daily
+  npm run lifeos -- save "message"
   npm run lifeos -- todoist projects
   npm run lifeos -- todoist list
   npm run lifeos -- todoist pull
@@ -159,6 +172,46 @@ async function showToday() {
       console.log(`- ${item}`);
     }
   }
+}
+
+async function showDailyReview() {
+  const env = await loadEnv();
+  const token = requireEnv(env, 'TODOIST_API_TOKEN');
+  const [areas, inbox, projects, tasks] = await Promise.all([
+    safeRead(areasPath),
+    safeRead(inboxPath),
+    safeRead(projectsPath),
+    getTodoistTasks(token, env)
+  ]);
+  const inboxItems = parseInboxItems(inbox);
+  const activeProjects = parseProjectHeadings(projects).slice(0, 10);
+
+  console.log('# Ежедневный обзор');
+  console.log('');
+  console.log('## Фокусы');
+  printFocusLines(areas);
+  console.log('');
+  console.log('## Активные задачи Todoist');
+  printList(tasks.map((task) => task.content), 'Нет активных задач Todoist.');
+  console.log('');
+  console.log('## Inbox');
+  printList(inboxItems, 'Inbox пуст.');
+  console.log('');
+  console.log('## Проекты для внимания');
+  printList(activeProjects, 'Проекты не найдены.');
+  console.log('');
+  console.log('## Сегодня важно');
+  console.log('- [ ] ');
+  console.log('- [ ] ');
+  console.log('- [ ] ');
+  console.log('');
+  console.log('## Минимум для баланса');
+  console.log('- Работа / карьера:');
+  console.log('- Семья:');
+  console.log('- Здоровье:');
+  console.log('');
+  console.log('## Что может сломать день');
+  console.log('- ');
 }
 
 async function pullTodoist() {
@@ -342,6 +395,19 @@ async function gitSync() {
   console.log('Review changes, then commit with git when ready.');
 }
 
+async function saveChanges(message) {
+  const status = await runCapture('git', ['status', '--short']);
+
+  if (!status.trim()) {
+    console.log('No changes to save.');
+    return;
+  }
+
+  await run('git', ['add', '.']);
+  await run('git', ['commit', '-m', message]);
+  await run('git', ['push']);
+}
+
 async function loadEnv() {
   const env = { ...process.env };
 
@@ -403,6 +469,31 @@ function parseInboxItems(content) {
     .filter((line) => line.startsWith('- '))
     .map((line) => line.slice(2).trim())
     .filter(Boolean);
+}
+
+function parseProjectHeadings(content) {
+  const headings = [];
+
+  for (const rawLine of content.split('\n')) {
+    const line = rawLine.trim();
+
+    if (line.startsWith('## ')) {
+      headings.push(line.slice(3).trim());
+    }
+  }
+
+  return headings;
+}
+
+function printList(items, emptyMessage) {
+  if (items.length === 0) {
+    console.log(`- ${emptyMessage}`);
+    return;
+  }
+
+  for (const item of items) {
+    console.log(`- ${item}`);
+  }
 }
 
 function printFocusLines(content) {
@@ -534,6 +625,27 @@ function run(command, commandArgs) {
         resolve();
       } else {
         reject(new Error(`${command} ${commandArgs.join(' ')} failed with ${code}`));
+      }
+    });
+  });
+}
+
+function runCapture(command, commandArgs) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, commandArgs, {
+      cwd: root
+    });
+    const stdout = [];
+    const stderr = [];
+
+    child.stdout.on('data', (chunk) => stdout.push(chunk));
+    child.stderr.on('data', (chunk) => stderr.push(chunk));
+    child.on('error', reject);
+    child.on('close', (code) => {
+      if (code === 0) {
+        resolve(Buffer.concat(stdout).toString('utf8'));
+      } else {
+        reject(new Error(Buffer.concat(stderr).toString('utf8') || `${command} ${commandArgs.join(' ')} failed with ${code}`));
       }
     });
   });

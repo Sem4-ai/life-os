@@ -76,6 +76,18 @@ npm run lifeos -- today
 Показывает текущие фокусы из `areas.md`, активные задачи Todoist и `inbox.md`.
 
 ```bash
+npm run lifeos -- daily
+```
+
+Показывает заготовку ежедневного обзора: фокусы, задачи, inbox, проекты и три главных действия дня.
+
+```bash
+npm run lifeos -- save "Daily review"
+```
+
+Сохраняет текущие изменения в git и отправляет их в GitHub.
+
+```bash
 npm run lifeos -- inbox add "Позвонить родителям"
 ```
 
