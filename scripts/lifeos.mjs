@@ -5,6 +5,7 @@ import { existsSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 
 const root = new URL('../', import.meta.url);
+const areasPath = new URL('../areas.md', import.meta.url);
 const inboxPath = new URL('../inbox.md', import.meta.url);
 const envPath = new URL('../.env', import.meta.url);
 
@@ -25,6 +26,21 @@ async function main() {
 
   if (domain === 'inbox' && action === 'add') {
     await addInbox(rest.join(' ').trim());
+    return;
+  }
+
+  if (domain === 'task' && action === 'add') {
+    await addTask(rest.join(' ').trim());
+    return;
+  }
+
+  if (domain === 'task' && action === 'done') {
+    await completeTodoistTask(rest.join(' ').trim());
+    return;
+  }
+
+  if (domain === 'today') {
+    await showToday();
     return;
   }
 
@@ -72,6 +88,9 @@ Life OS CLI
 
 Commands:
   npm run lifeos -- inbox add "text"
+  npm run lifeos -- task add "text"
+  npm run lifeos -- task done "text"
+  npm run lifeos -- today
   npm run lifeos -- todoist projects
   npm run lifeos -- todoist list
   npm run lifeos -- todoist pull
@@ -93,6 +112,53 @@ async function addInbox(text) {
 
   await appendInboxLines([normalizeInboxLine(text)]);
   console.log(`Added to inbox: ${text}`);
+}
+
+async function addTask(text) {
+  if (!text) {
+    throw new Error('Usage: npm run lifeos -- task add "text"');
+  }
+
+  await addInbox(text);
+  await pushInboxToTodoist();
+}
+
+async function showToday() {
+  const env = await loadEnv();
+  const token = requireEnv(env, 'TODOIST_API_TOKEN');
+  const [areas, inbox, tasks] = await Promise.all([
+    safeRead(areasPath),
+    safeRead(inboxPath),
+    getTodoistTasks(token, env)
+  ]);
+
+  console.log('# Today');
+  console.log('');
+  console.log('## Focus');
+  printFocusLines(areas);
+  console.log('');
+  console.log('## Todoist');
+
+  if (tasks.length === 0) {
+    console.log('- No active Todoist tasks found.');
+  } else {
+    for (const task of tasks) {
+      console.log(`- ${task.content}`);
+    }
+  }
+
+  console.log('');
+  console.log('## Inbox');
+
+  const inboxItems = parseInboxItems(inbox);
+
+  if (inboxItems.length === 0) {
+    console.log('- Inbox is empty.');
+  } else {
+    for (const item of inboxItems) {
+      console.log(`- ${item}`);
+    }
+  }
 }
 
 async function pullTodoist() {
@@ -337,6 +403,38 @@ function parseInboxItems(content) {
     .filter((line) => line.startsWith('- '))
     .map((line) => line.slice(2).trim())
     .filter(Boolean);
+}
+
+function printFocusLines(content) {
+  const lines = content.split('\n');
+  let currentArea = null;
+  let expectingFocus = false;
+  let printed = 0;
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+
+    if (line.startsWith('# ')) {
+      currentArea = line.slice(2).trim();
+      expectingFocus = false;
+      continue;
+    }
+
+    if (line === 'Текущий фокус:') {
+      expectingFocus = true;
+      continue;
+    }
+
+    if (expectingFocus && line.startsWith('- ')) {
+      console.log(`- ${currentArea}: ${line.slice(2).trim()}`);
+      printed += 1;
+      expectingFocus = false;
+    }
+  }
+
+  if (printed === 0) {
+    console.log('- No focus found in areas.md.');
+  }
 }
 
 function uniqueItems(items) {

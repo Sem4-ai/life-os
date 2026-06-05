@@ -58,6 +58,24 @@ Git хранит историю изменений и позволяет без�
 ### Команды
 
 ```bash
+npm run lifeos -- task add "Купить витамины"
+```
+
+Добавляет задачу в `inbox.md` и создает ее в Todoist без дублей.
+
+```bash
+npm run lifeos -- task done "Купить витамины"
+```
+
+Отмечает задачу выполненной в Todoist и удаляет ее из `inbox.md`.
+
+```bash
+npm run lifeos -- today
+```
+
+Показывает текущие фокусы из `areas.md`, активные задачи Todoist и `inbox.md`.
+
+```bash
 npm run lifeos -- inbox add "Позвонить родителям"
 ```
 

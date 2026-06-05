@@ -6,6 +6,9 @@
   "scripts": {
     "lifeos": "node scripts/lifeos.mjs",
     "inbox:add": "node scripts/lifeos.mjs inbox add",
+    "task:add": "node scripts/lifeos.mjs task add",
+    "task:done": "node scripts/lifeos.mjs task done",
+    "today": "node scripts/lifeos.mjs today",
     "todoist:projects": "node scripts/lifeos.mjs todoist projects",
     "todoist:list": "node scripts/lifeos.mjs todoist list",
     "todoist:pull": "node scripts/lifeos.mjs todoist pull",
