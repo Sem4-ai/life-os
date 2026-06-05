@@ -1,0 +1,16 @@
+{
+  "name": "life-os",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "lifeos": "node scripts/lifeos.mjs",
+    "inbox:add": "node scripts/lifeos.mjs inbox add",
+    "todoist:pull": "node scripts/lifeos.mjs todoist pull",
+    "todoist:push-inbox": "node scripts/lifeos.mjs todoist push-inbox",
+    "git:sync": "node scripts/lifeos.mjs git sync"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
