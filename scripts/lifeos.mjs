@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { appendFile, readFile } from 'node:fs/promises';
+import { appendFile, readFile, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 
@@ -33,13 +33,28 @@ async function main() {
     return;
   }
 
+  if (domain === 'todoist' && action === 'list') {
+    await listTodoistTasks();
+    return;
+  }
+
   if (domain === 'todoist' && action === 'projects') {
     await listTodoistProjects();
     return;
   }
 
+  if (domain === 'todoist' && action === 'complete') {
+    await completeTodoistTask(rest.join(' ').trim());
+    return;
+  }
+
   if (domain === 'todoist' && action === 'push-inbox') {
     await pushInboxToTodoist();
+    return;
+  }
+
+  if (domain === 'todoist' && action === 'sync') {
+    await syncTodoist();
     return;
   }
 
@@ -58,8 +73,11 @@ Life OS CLI
 Commands:
   npm run lifeos -- inbox add "text"
   npm run lifeos -- todoist projects
+  npm run lifeos -- todoist list
   npm run lifeos -- todoist pull
   npm run lifeos -- todoist push-inbox
+  npm run lifeos -- todoist complete "text"
+  npm run lifeos -- todoist sync
   npm run lifeos -- git sync
 
 Environment:
@@ -120,6 +138,21 @@ async function getTodoistTasks(token, env) {
   } while (cursor);
 
   return tasks;
+}
+
+async function listTodoistTasks() {
+  const env = await loadEnv();
+  const token = requireEnv(env, 'TODOIST_API_TOKEN');
+  const tasks = await getTodoistTasks(token, env);
+
+  if (tasks.length === 0) {
+    console.log('No active Todoist tasks found.');
+    return;
+  }
+
+  for (const task of tasks) {
+    console.log(`${task.content}\t${task.id}`);
+  }
 }
 
 async function listTodoistProjects() {
@@ -196,6 +229,45 @@ async function pushInboxToTodoist() {
 
   const skipped = items.length - created;
   console.log(`Created ${created} Todoist task(s) from inbox. Skipped ${skipped} existing item(s).`);
+}
+
+async function completeTodoistTask(query) {
+  if (!query) {
+    throw new Error('Usage: npm run lifeos -- todoist complete "text"');
+  }
+
+  const env = await loadEnv();
+  const token = requireEnv(env, 'TODOIST_API_TOKEN');
+  const tasks = await getTodoistTasks(token, env);
+  const matches = findMatchingTasks(tasks, query);
+
+  if (matches.length === 0) {
+    throw new Error(`No active Todoist task matched: ${query}`);
+  }
+
+  if (matches.length > 1) {
+    console.log('More than one task matched. Be more specific:');
+
+    for (const task of matches) {
+      console.log(`${task.content}\t${task.id}`);
+    }
+
+    process.exitCode = 1;
+    return;
+  }
+
+  const [task] = matches;
+  await todoistRequest(token, `/tasks/${encodeURIComponent(task.id)}/close`, {
+    method: 'POST'
+  });
+  await removeInboxItem(task.content);
+  console.log(`Completed Todoist task: ${task.content}`);
+}
+
+async function syncTodoist() {
+  await pullTodoist();
+  await pushInboxToTodoist();
+  await run('git', ['status', '--short']);
 }
 
 async function gitSync() {
@@ -289,6 +361,19 @@ function normalizeTaskContent(content) {
   return content.replace(/\s+/g, ' ').trim().toLowerCase();
 }
 
+function findMatchingTasks(tasks, query) {
+  const normalizedQuery = normalizeTaskContent(query);
+  const exactMatches = tasks.filter(
+    (task) => normalizeTaskContent(task.content) === normalizedQuery
+  );
+
+  if (exactMatches.length > 0) {
+    return exactMatches;
+  }
+
+  return tasks.filter((task) => normalizeTaskContent(task.content).includes(normalizedQuery));
+}
+
 function normalizeInboxLine(text) {
   const trimmed = text.replace(/\s+/g, ' ').trim();
   return trimmed.startsWith('- ') ? trimmed : `- ${trimmed}`;
@@ -298,6 +383,27 @@ async function appendInboxLines(lines) {
   const existing = await safeRead(inboxPath);
   const prefix = existing && !existing.endsWith('\n') ? '\n' : '';
   await appendFile(inboxPath, `${prefix}${lines.join('\n')}\n`, 'utf8');
+}
+
+async function removeInboxItem(text) {
+  const existing = await safeRead(inboxPath);
+  const target = normalizeTaskContent(text);
+  const lines = existing.split('\n');
+  const filteredLines = lines.filter((line) => {
+    const trimmed = line.trim();
+
+    if (!trimmed.startsWith('- ')) {
+      return true;
+    }
+
+    return normalizeTaskContent(trimmed.slice(2)) !== target;
+  });
+
+  const nextContent = filteredLines.join('\n').replace(/\n*$/, '\n');
+
+  if (nextContent !== existing) {
+    await writeFile(inboxPath, nextContent, 'utf8');
+  }
 }
 
 async function safeRead(path) {

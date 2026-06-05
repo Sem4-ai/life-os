@@ -7,8 +7,10 @@
     "lifeos": "node scripts/lifeos.mjs",
     "inbox:add": "node scripts/lifeos.mjs inbox add",
     "todoist:projects": "node scripts/lifeos.mjs todoist projects",
+    "todoist:list": "node scripts/lifeos.mjs todoist list",
     "todoist:pull": "node scripts/lifeos.mjs todoist pull",
     "todoist:push-inbox": "node scripts/lifeos.mjs todoist push-inbox",
+    "todoist:sync": "node scripts/lifeos.mjs todoist sync",
     "git:sync": "node scripts/lifeos.mjs git sync"
   },
   "engines": {
