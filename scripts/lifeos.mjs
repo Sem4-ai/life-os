@@ -9,6 +9,8 @@ const areasPath = new URL('../areas.md', import.meta.url);
 const inboxPath = new URL('../inbox.md', import.meta.url);
 const projectsPath = new URL('../projects.md', import.meta.url);
 const envPath = new URL('../.env', import.meta.url);
+const categories = ['Work', 'Career', 'Relationship', 'Family', 'Health', 'Home'];
+const unclearCategory = 'требует уточнения';
 
 const args = process.argv.slice(2);
 
@@ -547,7 +549,7 @@ function uniqueItems(items) {
 }
 
 function normalizeTaskContent(content) {
-  return content.replace(/\s+/g, ' ').trim().toLowerCase();
+  return stripCategoryPrefix(content).replace(/\s+/g, ' ').trim().toLowerCase();
 }
 
 function findMatchingTasks(tasks, query) {
@@ -565,7 +567,58 @@ function findMatchingTasks(tasks, query) {
 
 function normalizeInboxLine(text) {
   const trimmed = text.replace(/\s+/g, ' ').trim();
-  return trimmed.startsWith('- ') ? trimmed : `- ${trimmed}`;
+  const withoutMarker = trimmed.startsWith('- ') ? trimmed.slice(2).trim() : trimmed;
+  const categorized = hasCategoryPrefix(withoutMarker)
+    ? withoutMarker
+    : `[${classifyTask(withoutMarker)}] ${withoutMarker}`;
+
+  return `- ${categorized}`;
+}
+
+function hasCategoryPrefix(content) {
+  return [...categories, unclearCategory].some((category) => content.startsWith(`[${category}] `));
+}
+
+function stripCategoryPrefix(content) {
+  for (const category of [...categories, unclearCategory]) {
+    const prefix = `[${category}] `;
+
+    if (content.startsWith(prefix)) {
+      return content.slice(prefix.length);
+    }
+  }
+
+  return content;
+}
+
+function classifyTask(content) {
+  const normalized = content.toLowerCase();
+
+  if (/(эпл|электронн|газпром|коллект|surge|белк|давальческ|работ)/.test(normalized)) {
+    return 'Work';
+  }
+
+  if (/(грейд|карьер|директор|должност)/.test(normalized)) {
+    return 'Career';
+  }
+
+  if (/(жен|отношен|вдвоем|пар)/.test(normalized)) {
+    return 'Relationship';
+  }
+
+  if (/(родител|сын|ребен|ребён|семь)/.test(normalized)) {
+    return 'Family';
+  }
+
+  if (/(сон|вес|здоров|трен|энерг|врач)/.test(normalized)) {
+    return 'Health';
+  }
+
+  if (/(дом|ванн|слив|mercedes|мерседес|кондиционер|то | то$|машин)/.test(normalized)) {
+    return 'Home';
+  }
+
+  return unclearCategory;
 }
 
 async function appendInboxLines(lines) {
