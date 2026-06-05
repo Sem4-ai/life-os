@@ -33,6 +33,11 @@ async function main() {
     return;
   }
 
+  if (domain === 'todoist' && action === 'projects') {
+    await listTodoistProjects();
+    return;
+  }
+
   if (domain === 'todoist' && action === 'push-inbox') {
     await pushInboxToTodoist();
     return;
@@ -52,6 +57,7 @@ Life OS CLI
 
 Commands:
   npm run lifeos -- inbox add "text"
+  npm run lifeos -- todoist projects
   npm run lifeos -- todoist pull
   npm run lifeos -- todoist push-inbox
   npm run lifeos -- git sync
@@ -114,6 +120,40 @@ async function getTodoistTasks(token, env) {
   } while (cursor);
 
   return tasks;
+}
+
+async function listTodoistProjects() {
+  const env = await loadEnv();
+  const token = requireEnv(env, 'TODOIST_API_TOKEN');
+  const projects = await getTodoistProjects(token);
+
+  if (projects.length === 0) {
+    console.log('No Todoist projects found.');
+    return;
+  }
+
+  for (const project of projects) {
+    console.log(`${project.name}\t${project.id}`);
+  }
+}
+
+async function getTodoistProjects(token) {
+  const projects = [];
+  let cursor = null;
+
+  do {
+    const query = new URLSearchParams({ limit: '200' });
+
+    if (cursor) {
+      query.set('cursor', cursor);
+    }
+
+    const page = await todoistRequest(token, `/projects?${query.toString()}`);
+    projects.push(...page.results);
+    cursor = page.next_cursor;
+  } while (cursor);
+
+  return projects;
 }
 
 async function pushInboxToTodoist() {

@@ -64,6 +64,12 @@ npm run lifeos -- inbox add "Позвонить родителям"
 Добавляет строку в `inbox.md`.
 
 ```bash
+npm run lifeos -- todoist projects
+```
+
+Показывает проекты Todoist и их id для настройки `TODOIST_PROJECT_ID`.
+
+```bash
 npm run lifeos -- todoist pull
 ```
 
