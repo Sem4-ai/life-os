@@ -67,25 +67,14 @@ async function addInbox(text) {
     throw new Error('Usage: npm run lifeos -- inbox add "text"');
   }
 
-  await appendFile(inboxPath, `${normalizeInboxLine(text)}\n`, 'utf8');
+  await appendInboxLines([normalizeInboxLine(text)]);
   console.log(`Added to inbox: ${text}`);
 }
 
 async function pullTodoist() {
   const env = await loadEnv();
   const token = requireEnv(env, 'TODOIST_API_TOKEN');
-  const query = new URLSearchParams();
-
-  if (env.TODOIST_PROJECT_ID) {
-    query.set('project_id', env.TODOIST_PROJECT_ID);
-  }
-
-  if (env.TODOIST_SECTION_ID) {
-    query.set('section_id', env.TODOIST_SECTION_ID);
-  }
-
-  const suffix = query.toString() ? `?${query.toString()}` : '';
-  const tasks = await todoistRequest(token, `/tasks${suffix}`);
+  const tasks = await getTodoistTasks(token, env);
   const existingInbox = await safeRead(inboxPath);
   const lines = tasks
     .filter((task) => !existingInbox.includes(task.content))
@@ -96,8 +85,35 @@ async function pullTodoist() {
     return;
   }
 
-  await appendFile(inboxPath, `${lines.join('\n')}\n`, 'utf8');
+  await appendInboxLines(lines);
   console.log(`Added ${lines.length} Todoist task(s) to inbox.`);
+}
+
+async function getTodoistTasks(token, env) {
+  const tasks = [];
+  let cursor = null;
+
+  do {
+    const query = new URLSearchParams({ limit: '200' });
+
+    if (env.TODOIST_PROJECT_ID) {
+      query.set('project_id', env.TODOIST_PROJECT_ID);
+    }
+
+    if (env.TODOIST_SECTION_ID) {
+      query.set('section_id', env.TODOIST_SECTION_ID);
+    }
+
+    if (cursor) {
+      query.set('cursor', cursor);
+    }
+
+    const page = await todoistRequest(token, `/tasks?${query.toString()}`);
+    tasks.push(...page.results);
+    cursor = page.next_cursor;
+  } while (cursor);
+
+  return tasks;
 }
 
 async function pushInboxToTodoist() {
@@ -167,7 +183,7 @@ function requireEnv(env, key) {
 }
 
 async function todoistRequest(token, path, options = {}) {
-  const response = await fetch(`https://api.todoist.com/rest/v2${path}`, {
+  const response = await fetch(`https://api.todoist.com/api/v1${path}`, {
     method: options.method || 'GET',
     headers: {
       Authorization: `Bearer ${token}`,
@@ -200,6 +216,12 @@ function parseInboxItems(content) {
 function normalizeInboxLine(text) {
   const trimmed = text.replace(/\s+/g, ' ').trim();
   return trimmed.startsWith('- ') ? trimmed : `- ${trimmed}`;
+}
+
+async function appendInboxLines(lines) {
+  const existing = await safeRead(inboxPath);
+  const prefix = existing && !existing.endsWith('\n') ? '\n' : '';
+  await appendFile(inboxPath, `${prefix}${lines.join('\n')}\n`, 'utf8');
 }
 
 async function safeRead(path) {
