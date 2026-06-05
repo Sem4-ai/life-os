@@ -160,16 +160,29 @@ async function pushInboxToTodoist() {
   const env = await loadEnv();
   const token = requireEnv(env, 'TODOIST_API_TOKEN');
   const inbox = await safeRead(inboxPath);
-  const items = parseInboxItems(inbox);
+  const items = uniqueItems(parseInboxItems(inbox));
 
   if (items.length === 0) {
     console.log('Inbox has no task-like items to push.');
     return;
   }
 
+  const existingTasks = await getTodoistTasks(token, env);
+  const existingTaskContents = new Set(
+    existingTasks.map((task) => normalizeTaskContent(task.content))
+  );
+  const itemsToCreate = items.filter(
+    (item) => !existingTaskContents.has(normalizeTaskContent(item))
+  );
+
+  if (itemsToCreate.length === 0) {
+    console.log(`No new Todoist tasks to create. Skipped ${items.length} existing inbox item(s).`);
+    return;
+  }
+
   let created = 0;
 
-  for (const item of items) {
+  for (const item of itemsToCreate) {
     await todoistRequest(token, '/tasks', {
       method: 'POST',
       body: {
@@ -181,7 +194,8 @@ async function pushInboxToTodoist() {
     created += 1;
   }
 
-  console.log(`Created ${created} Todoist task(s) from inbox.`);
+  const skipped = items.length - created;
+  console.log(`Created ${created} Todoist task(s) from inbox. Skipped ${skipped} existing item(s).`);
 }
 
 async function gitSync() {
@@ -251,6 +265,28 @@ function parseInboxItems(content) {
     .filter((line) => line.startsWith('- '))
     .map((line) => line.slice(2).trim())
     .filter(Boolean);
+}
+
+function uniqueItems(items) {
+  const seen = new Set();
+  const unique = [];
+
+  for (const item of items) {
+    const key = normalizeTaskContent(item);
+
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    unique.push(item);
+  }
+
+  return unique;
+}
+
+function normalizeTaskContent(content) {
+  return content.replace(/\s+/g, ' ').trim().toLowerCase();
 }
 
 function normalizeInboxLine(text) {

@@ -79,7 +79,7 @@ npm run lifeos -- todoist pull
 npm run lifeos -- todoist push-inbox
 ```
 
-Создает задачи Todoist из текущих пунктов `inbox.md`.
+Создает задачи Todoist из текущих пунктов `inbox.md`. Уже существующие задачи в выбранном проекте Todoist пропускаются по совпадению текста.
 
 ```bash
 npm run lifeos -- git sync
