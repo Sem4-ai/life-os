@@ -9,6 +9,18 @@ const areasPath = new URL('../areas.md', import.meta.url);
 const inboxPath = new URL('../inbox.md', import.meta.url);
 const projectsPath = new URL('../projects.md', import.meta.url);
 const envPath = new URL('../.env', import.meta.url);
+const userId = '501';
+const launchAgentDir = '/Users/grachev90/Library/LaunchAgents';
+const serverAgents = [
+  {
+    label: 'com.lifeos.todoist-sync',
+    plist: `${launchAgentDir}/com.lifeos.todoist-sync.plist`
+  },
+  {
+    label: 'com.lifeos.git-save',
+    plist: `${launchAgentDir}/com.lifeos.git-save.plist`
+  }
+];
 const categories = ['Work', 'Career', 'Relationship', 'Family', 'Health', 'Home'];
 const unclearCategory = 'требует уточнения';
 
@@ -54,6 +66,21 @@ async function main() {
 
   if (domain === 'save') {
     await saveChanges(rest.join(' ').trim() || action || 'Update Life OS');
+    return;
+  }
+
+  if (domain === 'server' && action === 'on') {
+    await setServerMode(true);
+    return;
+  }
+
+  if (domain === 'server' && action === 'off') {
+    await setServerMode(false);
+    return;
+  }
+
+  if (domain === 'server' && action === 'status') {
+    await showServerStatus();
     return;
   }
 
@@ -106,6 +133,9 @@ Commands:
   npm run lifeos -- today
   npm run lifeos -- daily
   npm run lifeos -- save "message"
+  npm run lifeos -- server on
+  npm run lifeos -- server off
+  npm run lifeos -- server status
   npm run lifeos -- todoist projects
   npm run lifeos -- todoist list
   npm run lifeos -- todoist pull
@@ -408,6 +438,85 @@ async function saveChanges(message) {
   await run('git', ['add', '.']);
   await run('git', ['commit', '-m', message]);
   await run('git', ['push']);
+}
+
+async function setServerMode(enabled) {
+  if (enabled) {
+    await setSleepDisabled(true);
+
+    for (const agent of serverAgents) {
+      await bootstrapAgent(agent);
+      await run('launchctl', ['kickstart', '-k', `gui/${userId}/${agent.label}`]);
+    }
+
+    console.log('Life OS server mode is ON.');
+    console.log('Mac sleep is disabled and background sync agents are loaded.');
+    return;
+  }
+
+  for (const agent of serverAgents) {
+    await bootoutAgent(agent);
+  }
+
+  await setSleepDisabled(false);
+  console.log('Life OS server mode is OFF.');
+  console.log('Background sync agents are unloaded and normal sleep is enabled.');
+}
+
+async function showServerStatus() {
+  const pmset = await runCapture('pmset', ['-g']);
+  const sleepDisabled = /SleepDisabled\s+1/.test(pmset);
+
+  console.log(`Sleep disabled: ${sleepDisabled ? 'yes' : 'no'}`);
+
+  for (const agent of serverAgents) {
+    const status = await getAgentStatus(agent);
+    console.log(`${agent.label}: ${status}`);
+  }
+}
+
+async function setSleepDisabled(enabled) {
+  const script = enabled
+    ? 'pmset -a sleep 0 displaysleep 30 disksleep 0 powernap 1 womp 1 tcpkeepalive 1 disablesleep 1'
+    : 'pmset -a disablesleep 0 sleep 1 displaysleep 10 disksleep 10';
+
+  await run('osascript', [
+    '-e',
+    `do shell script ${JSON.stringify(script)} with administrator privileges`
+  ]);
+}
+
+async function bootstrapAgent(agent) {
+  const status = await getAgentStatus(agent);
+
+  if (status !== 'not loaded') {
+    return;
+  }
+
+  await run('launchctl', ['bootstrap', `gui/${userId}`, agent.plist]);
+}
+
+async function bootoutAgent(agent) {
+  const status = await getAgentStatus(agent);
+
+  if (status === 'not loaded') {
+    return;
+  }
+
+  await run('launchctl', ['bootout', `gui/${userId}/${agent.label}`]);
+}
+
+async function getAgentStatus(agent) {
+  try {
+    const output = await runCapture('launchctl', ['print', `gui/${userId}/${agent.label}`]);
+    const lastExitMatch = output.match(/last exit code = ([^\n]+)/);
+    const stateMatch = output.match(/state = ([^\n]+)/);
+    const state = stateMatch ? stateMatch[1].trim() : 'loaded';
+    const lastExit = lastExitMatch ? lastExitMatch[1].trim() : 'unknown';
+    return `${state}, last exit code ${lastExit}`;
+  } catch {
+    return 'not loaded';
+  }
 }
 
 async function loadEnv() {

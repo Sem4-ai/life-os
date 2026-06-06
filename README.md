@@ -101,6 +101,24 @@ npm run lifeos -- save "Daily review"
 Сохраняет текущие изменения в git и отправляет их в GitHub.
 
 ```bash
+npm run lifeos -- server on
+```
+
+Включает серверный режим: запрещает сон Mac и загружает фоновые агенты синхронизации LifeOS.
+
+```bash
+npm run lifeos -- server off
+```
+
+Выключает серверный режим: выгружает фоновые агенты и возвращает обычный сон Mac.
+
+```bash
+npm run lifeos -- server status
+```
+
+Показывает, отключен ли сон и загружены ли фоновые агенты.
+
+```bash
 npm run lifeos -- inbox add "Позвонить родителям"
 ```
 
