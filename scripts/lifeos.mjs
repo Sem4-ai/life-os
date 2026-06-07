@@ -120,6 +120,11 @@ async function main() {
     return;
   }
 
+  if (domain === 'todoist' && action === 'organize') {
+    await organizeTodoistTasks();
+    return;
+  }
+
   if (domain === 'todoist' && action === 'sync') {
     await syncTodoist();
     return;
@@ -153,6 +158,7 @@ Commands:
   npm run lifeos -- todoist list
   npm run lifeos -- todoist pull
   npm run lifeos -- todoist push-inbox
+  npm run lifeos -- todoist organize
   npm run lifeos -- todoist complete "text"
   npm run lifeos -- todoist sync
   npm run lifeos -- git sync
@@ -357,6 +363,32 @@ async function getTodoistProjects(token) {
   return projects;
 }
 
+async function getTodoistSections(token, env) {
+  if (!env.TODOIST_PROJECT_ID) {
+    return [];
+  }
+
+  const sections = [];
+  let cursor = null;
+
+  do {
+    const query = new URLSearchParams({
+      project_id: env.TODOIST_PROJECT_ID,
+      limit: '200'
+    });
+
+    if (cursor) {
+      query.set('cursor', cursor);
+    }
+
+    const page = await todoistRequest(token, `/sections?${query.toString()}`);
+    sections.push(...page.results);
+    cursor = page.next_cursor;
+  } while (cursor);
+
+  return sections;
+}
+
 async function pushInboxToTodoist() {
   const env = await loadEnv();
   const token = requireEnv(env, 'TODOIST_API_TOKEN');
@@ -369,6 +401,7 @@ async function pushInboxToTodoist() {
   }
 
   const existingTasks = await getTodoistTasks(token, env);
+  const sectionByCategory = await getTodoistSectionByCategory(token, env);
   const existingTaskContents = new Set(
     existingTasks.map((task) => normalizeTaskContent(task.content))
   );
@@ -384,12 +417,13 @@ async function pushInboxToTodoist() {
   let created = 0;
 
   for (const item of itemsToCreate) {
+    const category = getCategoryPrefix(item);
     await todoistRequest(token, '/tasks', {
       method: 'POST',
       body: {
         content: item,
         project_id: env.TODOIST_PROJECT_ID || undefined,
-        section_id: env.TODOIST_SECTION_ID || undefined
+        section_id: sectionByCategory.get(category) || env.TODOIST_SECTION_ID || undefined
       }
     });
     created += 1;
@@ -397,6 +431,51 @@ async function pushInboxToTodoist() {
 
   const skipped = items.length - created;
   console.log(`Created ${created} Todoist task(s) from inbox. Skipped ${skipped} existing item(s).`);
+}
+
+async function organizeTodoistTasks() {
+  const env = await loadEnv();
+  const token = requireEnv(env, 'TODOIST_API_TOKEN');
+  const tasks = await getTodoistTasks(token, env);
+  const sectionByCategory = await getTodoistSectionByCategory(token, env);
+  let moved = 0;
+  let skipped = 0;
+
+  for (const task of tasks) {
+    const category = getCategoryPrefix(task.content);
+    const sectionId = sectionByCategory.get(category);
+
+    if (!sectionId || task.section_id === sectionId) {
+      skipped += 1;
+      continue;
+    }
+
+    await todoistRequest(token, `/tasks/${encodeURIComponent(task.id)}/move`, {
+      method: 'POST',
+      body: {
+        section_id: sectionId
+      }
+    });
+    moved += 1;
+  }
+
+  console.log(`Organized ${moved} Todoist task(s) into sections. Skipped ${skipped} task(s).`);
+}
+
+async function getTodoistSectionByCategory(token, env) {
+  const sections = await getTodoistSections(token, env);
+  const sectionByName = new Map(sections.map((section) => [section.name.toLowerCase(), section.id]));
+  const sectionByCategory = new Map();
+
+  for (const category of categories) {
+    const sectionId = sectionByName.get(category.toLowerCase());
+
+    if (sectionId) {
+      sectionByCategory.set(category, sectionId);
+    }
+  }
+
+  return sectionByCategory;
 }
 
 async function completeTodoistTask(query) {
@@ -435,6 +514,7 @@ async function completeTodoistTask(query) {
 async function syncTodoist() {
   await pullTodoist();
   await pushInboxToTodoist();
+  await organizeTodoistTasks();
   await run('git', ['status', '--short']);
 }
 
@@ -862,6 +942,16 @@ function normalizeInboxLine(text) {
 
 function hasCategoryPrefix(content) {
   return [...categories, unclearCategory].some((category) => content.startsWith(`[${category}] `));
+}
+
+function getCategoryPrefix(content) {
+  for (const category of categories) {
+    if (content.startsWith(`[${category}] `)) {
+      return category;
+    }
+  }
+
+  return null;
 }
 
 function stripCategoryPrefix(content) {
