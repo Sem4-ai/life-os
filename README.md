@@ -219,7 +219,9 @@ npm run lifeos -- todoist complete "Позвонить родителям"
 npm run lifeos -- todoist sync
 ```
 
-Выполняет двустороннюю синхронизацию: Todoist -> `inbox.md`, затем `inbox.md` -> Todoist, затем показывает `git status`.
+Выполняет двустороннюю синхронизацию: убирает из `inbox.md` задачи, которые были закрыты в Todoist, затем Todoist -> `inbox.md`, затем `inbox.md` -> Todoist, затем показывает `git status`.
+
+Фоновый агент Life OS выполняет этот sync раз в час, когда включен серверный режим.
 
 ```bash
 npm run lifeos -- git sync

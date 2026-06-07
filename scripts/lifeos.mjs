@@ -11,6 +11,7 @@ const healthPath = new URL('../health.md', import.meta.url);
 const inboxPath = new URL('../inbox.md', import.meta.url);
 const projectsPath = new URL('../projects.md', import.meta.url);
 const meetingInboxPath = new URL('../meeting-inbox', import.meta.url);
+const todoistStatePath = new URL('../todoist-state.json', import.meta.url);
 const envPath = new URL('../.env', import.meta.url);
 const obsidianVaultPath = '/Users/grachev90/Library/Mobile Documents/iCloud~md~obsidian/Documents/life-os';
 const userId = '501';
@@ -558,10 +559,98 @@ async function completeTodoistTask(query) {
 }
 
 async function syncTodoist() {
+  await removeClosedTodoistTasksFromInbox();
   await pullTodoist();
   await pushInboxToTodoist();
   await organizeTodoistTasks();
+  await saveTodoistSyncState();
   await run('git', ['status', '--short']);
+}
+
+async function removeClosedTodoistTasksFromInbox() {
+  const env = await loadEnv();
+  const token = requireEnv(env, 'TODOIST_API_TOKEN');
+  const activeTasks = await getTodoistTasks(token, env);
+  const activeTaskContents = new Set(
+    activeTasks.map((task) => normalizeTaskContent(task.content))
+  );
+  const previousTaskContents = new Set(await loadTodoistSyncState());
+
+  if (previousTaskContents.size === 0) {
+    console.log('No previous Todoist sync state found. Closed-task cleanup will start after this sync.');
+    return;
+  }
+
+  const existing = await safeRead(inboxPath);
+  const lines = existing.split('\n');
+  let removed = 0;
+
+  const nextLines = lines.filter((line) => {
+    const trimmed = line.trim();
+
+    if (!trimmed.startsWith('- ')) {
+      return true;
+    }
+
+    const item = trimmed.slice(2).trim();
+    const normalizedItem = normalizeTaskContent(item);
+
+    if (activeTaskContents.has(normalizedItem)) {
+      return true;
+    }
+
+    if (!previousTaskContents.has(normalizedItem)) {
+      return true;
+    }
+
+    removed += 1;
+    return false;
+  });
+
+  if (removed === 0) {
+    console.log('No closed Todoist tasks to remove from inbox.');
+    return;
+  }
+
+  await writeFile(inboxPath, nextLines.join('\n').replace(/\n*$/, '\n'), 'utf8');
+  console.log(`Removed ${removed} closed Todoist task(s) from inbox.`);
+}
+
+async function saveTodoistSyncState() {
+  const env = await loadEnv();
+  const token = requireEnv(env, 'TODOIST_API_TOKEN');
+  const activeTasks = await getTodoistTasks(token, env);
+  const taskContents = uniqueItems(activeTasks.map((task) => task.content))
+    .map((content) => normalizeTaskContent(content))
+    .sort();
+  const previousTaskContents = await loadTodoistSyncState();
+
+  if (JSON.stringify(previousTaskContents) === JSON.stringify(taskContents)) {
+    console.log(`Todoist sync state unchanged for ${taskContents.length} active task(s).`);
+    return;
+  }
+
+  await writeFile(
+    todoistStatePath,
+    `${JSON.stringify({ activeTaskContents: taskContents }, null, 2)}\n`,
+    'utf8'
+  );
+  console.log(`Saved Todoist sync state for ${taskContents.length} active task(s).`);
+}
+
+async function loadTodoistSyncState() {
+  const content = await safeRead(todoistStatePath);
+
+  if (!content.trim()) {
+    return [];
+  }
+
+  try {
+    const state = JSON.parse(content);
+    return Array.isArray(state.activeTaskContents) ? state.activeTaskContents : [];
+  } catch {
+    return [];
+  }
 }
 
 async function gitSync() {
