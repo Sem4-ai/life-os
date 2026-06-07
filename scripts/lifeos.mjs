@@ -274,8 +274,11 @@ async function pullTodoist() {
   const token = requireEnv(env, 'TODOIST_API_TOKEN');
   const tasks = await getTodoistTasks(token, env);
   const existingInbox = await safeRead(inboxPath);
+  const existingInboxItems = new Set(
+    parseInboxItems(existingInbox).map((item) => normalizeTaskContent(item))
+  );
   const lines = tasks
-    .filter((task) => !existingInbox.includes(task.content))
+    .filter((task) => !existingInboxItems.has(normalizeTaskContent(task.content)))
     .map((task) => normalizeInboxLine(task.content));
 
   if (lines.length === 0) {
@@ -421,7 +424,7 @@ async function pushInboxToTodoist() {
     await todoistRequest(token, '/tasks', {
       method: 'POST',
       body: {
-        content: item,
+        content: todoistTaskContent(item),
         project_id: env.TODOIST_PROJECT_ID || undefined,
         section_id: sectionByCategory.get(category) || env.TODOIST_SECTION_ID || undefined
       }
@@ -439,27 +442,40 @@ async function organizeTodoistTasks() {
   const tasks = await getTodoistTasks(token, env);
   const sectionByCategory = await getTodoistSectionByCategory(token, env);
   let moved = 0;
+  let renamed = 0;
   let skipped = 0;
 
   for (const task of tasks) {
     const category = getCategoryPrefix(task.content);
     const sectionId = sectionByCategory.get(category);
+    const cleanContent = todoistTaskContent(task.content);
 
-    if (!sectionId || task.section_id === sectionId) {
-      skipped += 1;
-      continue;
+    if (sectionId && task.section_id !== sectionId) {
+      await todoistRequest(token, `/tasks/${encodeURIComponent(task.id)}/move`, {
+        method: 'POST',
+        body: {
+          section_id: sectionId
+        }
+      });
+      moved += 1;
     }
 
-    await todoistRequest(token, `/tasks/${encodeURIComponent(task.id)}/move`, {
-      method: 'POST',
-      body: {
-        section_id: sectionId
-      }
-    });
-    moved += 1;
+    if (cleanContent !== task.content) {
+      await todoistRequest(token, `/tasks/${encodeURIComponent(task.id)}`, {
+        method: 'POST',
+        body: {
+          content: cleanContent
+        }
+      });
+      renamed += 1;
+    }
+
+    if ((!sectionId || task.section_id === sectionId) && cleanContent === task.content) {
+      skipped += 1;
+    }
   }
 
-  console.log(`Organized ${moved} Todoist task(s) into sections. Skipped ${skipped} task(s).`);
+  console.log(`Organized ${moved} Todoist task(s) into sections. Renamed ${renamed} task(s). Skipped ${skipped} task(s).`);
 }
 
 async function getTodoistSectionByCategory(token, env) {
@@ -915,6 +931,10 @@ function uniqueItems(items) {
 
 function normalizeTaskContent(content) {
   return stripCategoryPrefix(content).replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+function todoistTaskContent(content) {
+  return stripCategoryPrefix(content).replace(/\s+/g, ' ').trim();
 }
 
 function findMatchingTasks(tasks, query) {
