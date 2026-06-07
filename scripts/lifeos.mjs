@@ -72,6 +72,11 @@ async function main() {
     return;
   }
 
+  if (domain === 'projects' && action === 'dashboard') {
+    await showProjectsDashboard();
+    return;
+  }
+
   if (domain === 'save') {
     await saveChanges(rest.join(' ').trim() || action || 'Update Life OS');
     return;
@@ -170,6 +175,7 @@ Commands:
   npm run lifeos -- task done "text"
   npm run lifeos -- today
   npm run lifeos -- daily
+  npm run lifeos -- projects dashboard
   npm run lifeos -- save "message"
   npm run lifeos -- server on
   npm run lifeos -- server off
@@ -562,6 +568,235 @@ async function gitSync() {
   await run('git', ['pull', '--ff-only']);
   await run('git', ['status', '--short']);
   console.log('Review changes, then commit with git when ready.');
+}
+
+async function showProjectsDashboard() {
+  const projects = await getProjectNotes();
+  const todoistTasks = await getTodoistTasksForDashboard();
+  const today = new Date().toISOString().slice(0, 10);
+
+  console.log('# Сводка проектов');
+  console.log('');
+  console.log(`Дата: ${today}`);
+  console.log('');
+  console.log('## Требуют внимания');
+
+  const attentionItems = projects
+    .map((project) => projectAttention(project, today))
+    .filter(Boolean);
+
+  printList(attentionItems, 'Критичных сигналов нет.');
+  console.log('');
+  console.log('## Проекты');
+  console.log('');
+
+  for (const project of projects) {
+    const matchingTasks = findProjectTasks(todoistTasks, project);
+    console.log(`### ${project.title}`);
+    console.log(`- Статус: ${project.status}`);
+    console.log(`- Дедлайн: ${project.deadline}`);
+    console.log(`- Результат: ${project.result}`);
+    console.log(`- Следующий шаг: ${project.nextStep}`);
+    console.log(`- Риски: ${formatInlineList(project.risks)}`);
+    console.log(`- Открытые вопросы: ${formatInlineList(project.openQuestions)}`);
+    console.log(`- Последние решения: ${formatInlineList(project.decisions)}`);
+    console.log(`- Последние встречи: ${formatInlineList(project.meetings)}`);
+    console.log(`- Задачи Todoist: ${formatInlineList(matchingTasks)}`);
+    console.log(`- Файл: ${project.relativePath}`);
+    console.log('');
+  }
+}
+
+async function getProjectNotes() {
+  const workProjectsPath = new URL('../project-notes/work', import.meta.url);
+  const entries = await readdir(workProjectsPath, { withFileTypes: true });
+  const projects = [];
+
+  for (const entry of entries) {
+    if (!entry.isDirectory() || shouldSkipObsidianSyncEntry(entry.name)) {
+      continue;
+    }
+
+    const projectPath = new URL(`../project-notes/work/${entry.name}/project.md`, import.meta.url);
+
+    if (!existsSync(projectPath)) {
+      continue;
+    }
+
+    const [projectContent, meetingsContent, decisionsContent] = await Promise.all([
+      safeRead(projectPath),
+      safeRead(new URL(`../project-notes/work/${entry.name}/meetings.md`, import.meta.url)),
+      safeRead(new URL(`../project-notes/work/${entry.name}/decisions.md`, import.meta.url))
+    ]);
+
+    projects.push(parseProjectNote(entry.name, projectContent, meetingsContent, decisionsContent));
+  }
+
+  return projects.sort(compareProjectsForDashboard);
+}
+
+function parseProjectNote(slug, projectContent, meetingsContent, decisionsContent) {
+  const title = firstHeading(projectContent) || slug;
+
+  return {
+    slug,
+    title,
+    aliases: projectAliases(slug, title),
+    status: fieldValue(projectContent, 'Статус') || 'требует уточнения',
+    deadline: fieldValue(projectContent, 'Дедлайн') || 'требует уточнения',
+    result: fieldValue(projectContent, 'Результат') || 'требует уточнения',
+    nextStep: fieldValue(projectContent, 'Следующий шаг') || 'требует уточнения',
+    risks: sectionBullets(projectContent, 'Риски').slice(0, 3),
+    openQuestions: sectionBullets(projectContent, 'Открытые вопросы').slice(0, 3),
+    meetings: extractLatestSectionItems(meetingsContent).slice(0, 3),
+    decisions: sectionBullets(decisionsContent, 'Принятые решения').slice(-3).reverse(),
+    relativePath: `project-notes/work/${slug}/project.md`
+  };
+}
+
+function firstHeading(content) {
+  const line = content.split('\n').find((item) => item.startsWith('# '));
+  return line ? line.slice(2).trim() : null;
+}
+
+function fieldValue(content, field) {
+  const prefix = `${field}:`;
+  const line = content.split('\n').find((item) => item.startsWith(prefix));
+  return line ? line.slice(prefix.length).trim() : null;
+}
+
+function sectionBullets(content, heading) {
+  const lines = content.split('\n');
+  const bullets = [];
+  let inSection = false;
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+
+    if (line === `## ${heading}`) {
+      inSection = true;
+      continue;
+    }
+
+    if (inSection && line.startsWith('## ')) {
+      break;
+    }
+
+    if (inSection && line.startsWith('- ')) {
+      bullets.push(line.slice(2).trim());
+    }
+  }
+
+  return bullets.filter((item) => item && item !== 'требует уточнения');
+}
+
+function extractLatestSectionItems(content) {
+  return content
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith('- '))
+    .map((line) => line.slice(2).trim())
+    .filter((item) => item && item !== 'требует уточнения')
+    .slice(-5)
+    .reverse();
+}
+
+function projectAliases(slug, title) {
+  const aliases = new Set([
+    slug.toLowerCase(),
+    title.toLowerCase(),
+    title.toLowerCase().replace(/\s+/g, ''),
+    slug.toLowerCase().replace(/-/g, ' ')
+  ]);
+
+  if (slug === 'epl') aliases.add('эпл');
+  if (slug === 'avarkomy') aliases.add('аварком');
+  if (slug === 'gazpromneft') aliases.add('газпром');
+  if (slug === 'belka-surge') {
+    aliases.add('белка');
+    aliases.add('surge');
+  }
+  if (slug === 'support-move-2026-06-16') {
+    aliases.add('саппорт');
+    aliases.add('переезд');
+  }
+
+  return [...aliases];
+}
+
+async function getTodoistTasksForDashboard() {
+  try {
+    const env = await loadEnv();
+
+    if (!env.TODOIST_API_TOKEN) {
+      return [];
+    }
+
+    const tasks = await getTodoistTasks(env.TODOIST_API_TOKEN, env);
+    return tasks.map((task) => task.content);
+  } catch {
+    return [];
+  }
+}
+
+function findProjectTasks(tasks, project) {
+  return tasks
+    .filter((task) => {
+      const normalized = task.toLowerCase();
+      return project.aliases.some((alias) => normalized.includes(alias));
+    })
+    .slice(0, 5);
+}
+
+function projectAttention(project, today) {
+  const missingNextStep = project.nextStep === 'требует уточнения';
+  const missingDeadline = project.deadline === 'требует уточнения';
+  const deadlineDate = /^\d{4}-\d{2}-\d{2}$/.test(project.deadline) ? project.deadline : null;
+
+  if (deadlineDate) {
+    const daysLeft = Math.ceil((Date.parse(deadlineDate) - Date.parse(today)) / 86_400_000);
+
+    if (daysLeft < 0) {
+      return `${project.title}: дедлайн прошел ${project.deadline}`;
+    }
+
+    if (daysLeft <= 14) {
+      return `${project.title}: дедлайн через ${daysLeft} дн. (${project.deadline})`;
+    }
+  }
+
+  if (missingNextStep) {
+    return `${project.title}: не указан следующий шаг`;
+  }
+
+  if (missingDeadline) {
+    return `${project.title}: не указан дедлайн`;
+  }
+
+  return null;
+}
+
+function compareProjectsForDashboard(left, right) {
+  const leftDeadline = normalizedDeadline(left.deadline);
+  const rightDeadline = normalizedDeadline(right.deadline);
+
+  if (leftDeadline !== rightDeadline) {
+    return leftDeadline.localeCompare(rightDeadline);
+  }
+
+  return left.title.localeCompare(right.title);
+}
+
+function normalizedDeadline(deadline) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(deadline) ? deadline : '9999-12-31';
+}
+
+function formatInlineList(items) {
+  if (!items || items.length === 0) {
+    return 'нет данных';
+  }
+
+  return items.join('; ');
 }
 
 async function saveChanges(message) {
