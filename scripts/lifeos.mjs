@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 
-import { appendFile, readFile, writeFile } from 'node:fs/promises';
+import { appendFile, copyFile, mkdir, readdir, readFile, stat, utimes, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { spawn } from 'node:child_process';
+import path from 'node:path';
 
 const root = new URL('../', import.meta.url);
 const areasPath = new URL('../areas.md', import.meta.url);
@@ -10,6 +11,7 @@ const healthPath = new URL('../health.md', import.meta.url);
 const inboxPath = new URL('../inbox.md', import.meta.url);
 const projectsPath = new URL('../projects.md', import.meta.url);
 const envPath = new URL('../.env', import.meta.url);
+const obsidianVaultPath = '/Users/grachev90/Library/Mobile Documents/iCloud~md~obsidian/Documents/life-os';
 const userId = '501';
 const launchAgentDir = '/Users/grachev90/Library/LaunchAgents';
 const serverAgents = [
@@ -95,6 +97,16 @@ async function main() {
     return;
   }
 
+  if (domain === 'obsidian' && action === 'sync') {
+    await syncObsidian();
+    return;
+  }
+
+  if (domain === 'obsidian' && action === 'sync-loop') {
+    await syncObsidianLoop();
+    return;
+  }
+
   if (domain === 'todoist' && action === 'pull') {
     await pullTodoist();
     return;
@@ -154,6 +166,7 @@ Commands:
   npm run lifeos -- server status
   npm run lifeos -- health add-json '{"date":"2026-06-07","sleepHours":6.2,"steps":7200}'
   npm run lifeos -- health latest
+  npm run lifeos -- obsidian sync
   npm run lifeos -- todoist projects
   npm run lifeos -- todoist list
   npm run lifeos -- todoist pull
@@ -551,6 +564,100 @@ async function saveChanges(message) {
   await run('git', ['add', '.']);
   await run('git', ['commit', '-m', message]);
   await run('git', ['push']);
+}
+
+async function syncObsidian() {
+  if (!existsSync(obsidianVaultPath)) {
+    throw new Error(`Obsidian vault not found: ${obsidianVaultPath}`);
+  }
+
+  const repoRoot = root.pathname;
+  const fromObsidian = await syncMarkdownTree(obsidianVaultPath, repoRoot);
+  const toObsidian = await syncMarkdownTree(repoRoot, obsidianVaultPath);
+
+  console.log(`Obsidian sync complete. From Obsidian: ${fromObsidian}. To Obsidian: ${toObsidian}.`);
+}
+
+async function syncObsidianLoop() {
+  while (true) {
+    try {
+      await syncObsidian();
+    } catch (error) {
+      console.error(`[${new Date().toISOString()}] Obsidian sync failed: ${error.message}`);
+    }
+
+    await sleep(60_000);
+  }
+}
+
+async function syncMarkdownTree(sourceRoot, targetRoot) {
+  const files = await collectMarkdownFiles(sourceRoot);
+  let copied = 0;
+
+  for (const relativePath of files) {
+    const sourcePath = path.join(sourceRoot, relativePath);
+    const targetPath = path.join(targetRoot, relativePath);
+
+    if (await copyIfSourceIsNewer(sourcePath, targetPath)) {
+      copied += 1;
+    }
+  }
+
+  return copied;
+}
+
+async function collectMarkdownFiles(directory, base = directory) {
+  const entries = await readdir(directory, { withFileTypes: true });
+  const files = [];
+
+  for (const entry of entries) {
+    if (shouldSkipObsidianSyncEntry(entry.name)) {
+      continue;
+    }
+
+    const entryPath = path.join(directory, entry.name);
+
+    if (entry.isDirectory()) {
+      files.push(...await collectMarkdownFiles(entryPath, base));
+      continue;
+    }
+
+    if (entry.isFile() && entry.name.endsWith('.md')) {
+      files.push(path.relative(base, entryPath));
+    }
+  }
+
+  return files;
+}
+
+function shouldSkipObsidianSyncEntry(name) {
+  return name.startsWith('.') || ['node_modules', 'scripts'].includes(name);
+}
+
+async function copyIfSourceIsNewer(sourcePath, targetPath) {
+  const sourceStat = await stat(sourcePath);
+  let targetStat = null;
+
+  try {
+    targetStat = await stat(targetPath);
+  } catch (error) {
+    if (error.code !== 'ENOENT') {
+      throw error;
+    }
+  }
+
+  if (targetStat && sourceStat.mtimeMs <= targetStat.mtimeMs + 1000) {
+    return false;
+  }
+
+  await mkdir(path.dirname(targetPath), { recursive: true });
+  await copyFile(sourcePath, targetPath);
+  await utimes(targetPath, sourceStat.atime, sourceStat.mtime);
+  return true;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function setServerMode(enabled) {
