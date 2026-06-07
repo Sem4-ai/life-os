@@ -7,6 +7,7 @@ import path from 'node:path';
 
 const root = new URL('../', import.meta.url);
 const areasPath = new URL('../areas.md', import.meta.url);
+const calendarPath = new URL('../calendar.md', import.meta.url);
 const healthPath = new URL('../health.md', import.meta.url);
 const inboxPath = new URL('../inbox.md', import.meta.url);
 const projectsPath = new URL('../projects.md', import.meta.url);
@@ -24,6 +25,10 @@ const serverAgents = [
   {
     label: 'com.lifeos.todoist-sync',
     plist: `${launchAgentDir}/com.lifeos.todoist-sync.plist`
+  },
+  {
+    label: 'com.lifeos.calendar-sync',
+    plist: `${launchAgentDir}/com.lifeos.calendar-sync.plist`
   },
   {
     label: 'com.lifeos.git-save',
@@ -75,6 +80,21 @@ async function main() {
 
   if (domain === 'projects' && action === 'dashboard') {
     await showProjectsDashboard();
+    return;
+  }
+
+  if (domain === 'calendar' && action === 'sync') {
+    await syncCalendar();
+    return;
+  }
+
+  if (domain === 'calendar' && action === 'today') {
+    await showCalendarToday();
+    return;
+  }
+
+  if (domain === 'calendar' && action === 'agent' && rest[0] === 'install') {
+    await installCalendarAgent();
     return;
   }
 
@@ -177,6 +197,9 @@ Commands:
   npm run lifeos -- today
   npm run lifeos -- daily
   npm run lifeos -- projects dashboard
+  npm run lifeos -- calendar sync
+  npm run lifeos -- calendar today
+  npm run lifeos -- calendar agent install
   npm run lifeos -- save "message"
   npm run lifeos -- server on
   npm run lifeos -- server off
@@ -276,6 +299,8 @@ async function showDailyReview() {
   printFocusLines(areas);
   console.log('');
   await printHealthBlock();
+  console.log('');
+  printCalendarTodayBlock(await safeRead(calendarPath));
   console.log('');
   console.log('## Активные задачи Todoist');
   printList(tasks.map((task) => task.content), 'Нет активных задач Todoist.');
@@ -657,6 +682,182 @@ async function gitSync() {
   await run('git', ['pull', '--ff-only']);
   await run('git', ['status', '--short']);
   console.log('Review changes, then commit with git when ready.');
+}
+
+async function syncCalendar() {
+  const projects = await getProjectNotes();
+  const events = await getCalendarEvents();
+  const annotatedEvents = events
+    .map((event) => annotateCalendarEvent(event, projects))
+    .sort((left, right) => left.start.localeCompare(right.start));
+
+  await writeFile(calendarPath, formatCalendarFile(annotatedEvents), 'utf8');
+  await syncObsidian();
+  console.log(`Calendar sync complete. Events: ${annotatedEvents.length}.`);
+}
+
+async function showCalendarToday() {
+  const content = await safeRead(calendarPath);
+  const today = new Date().toISOString().slice(0, 10);
+  const lines = content.split('\n');
+  let inToday = false;
+  let printed = 0;
+
+  console.log('# Календарь сегодня');
+  console.log('');
+
+  for (const line of lines) {
+    if (line === `## ${today}`) {
+      inToday = true;
+      continue;
+    }
+
+    if (inToday && line.startsWith('## ')) {
+      break;
+    }
+
+    if (inToday && line.startsWith('- ')) {
+      console.log(line);
+      printed += 1;
+    }
+  }
+
+  if (printed === 0) {
+    console.log('- На сегодня событий в calendar.md нет. Запусти `npm run lifeos -- calendar sync`.');
+  }
+}
+
+async function getCalendarEvents() {
+  const script = `
+const Calendar = Application('Calendar');
+const now = new Date();
+const from = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+const to = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000);
+const events = [];
+
+function readValue(callback) {
+  try {
+    const value = callback();
+    return value == null ? '' : String(value);
+  } catch (error) {
+    return '';
+  }
+}
+
+for (const calendar of Calendar.calendars()) {
+  const calendarName = readValue(() => calendar.name());
+  let calendarEvents = [];
+
+  try {
+    calendarEvents = calendar.events.whose({
+      _and: [
+        { startDate: { _greaterThan: from } },
+        { startDate: { _lessThan: to } }
+      ]
+    })();
+  } catch (error) {
+    calendarEvents = [];
+  }
+
+  for (const event of calendarEvents) {
+    const startDate = event.startDate();
+    const endDate = event.endDate();
+
+    events.push({
+      title: readValue(() => event.summary()),
+      start: startDate ? startDate.toISOString() : '',
+      end: endDate ? endDate.toISOString() : '',
+      calendar: calendarName,
+      location: readValue(() => event.location())
+    });
+  }
+}
+
+JSON.stringify(events);
+`;
+
+  try {
+    const output = await runCaptureWithTimeout('osascript', ['-l', 'JavaScript', '-e', script], 45_000);
+    const parsed = JSON.parse(output.trim() || '[]');
+    return parsed.filter((event) => event.title && event.start);
+  } catch (error) {
+    throw new Error(`Calendar sync failed. Открой System Settings -> Privacy & Security -> Automation/Calendars и разреши Terminal/Node доступ к Calendar. Detail: ${error.message}`);
+  }
+}
+
+function annotateCalendarEvent(event, projects) {
+  const haystack = `${event.title} ${event.location} ${event.calendar}`.toLowerCase();
+  const project = projects.find((item) =>
+    item.aliases.some((alias) => haystack.includes(alias))
+  );
+
+  return {
+    ...event,
+    project: project ? project.title : 'General',
+    projectSlug: project ? project.slug : null
+  };
+}
+
+function formatCalendarFile(events) {
+  const generatedAt = new Date().toISOString();
+  const lines = [
+    '# Calendar',
+    '',
+    'События календаря для контекста Life OS.',
+    '',
+    `Обновлено: ${generatedAt}`,
+    '',
+    'Правило: события привязываются к проектам по названию/месту/календарю. Если совпадения нет, событие остается `General`.',
+    ''
+  ];
+
+  const eventsByDate = groupBy(events, (event) => event.start.slice(0, 10));
+
+  for (const date of Object.keys(eventsByDate).sort()) {
+    lines.push(`## ${date}`);
+    lines.push('');
+
+    for (const event of eventsByDate[date]) {
+      const timeRange = `${formatEventTime(event.start)}-${formatEventTime(event.end)}`;
+      const project = event.projectSlug
+        ? `[[project-notes/work/${event.projectSlug}/project|${event.project}]]`
+        : event.project;
+      const location = event.location ? `; место: ${event.location}` : '';
+      lines.push(`- ${timeRange} | ${project} | ${event.title} (${event.calendar}${location})`);
+    }
+
+    lines.push('');
+  }
+
+  if (events.length === 0) {
+    lines.push('## Нет событий');
+    lines.push('');
+    lines.push('- Calendar sync не нашел событий в диапазоне вчера -> следующие 14 дней.');
+    lines.push('');
+  }
+
+  return lines.join('\n');
+}
+
+function formatEventTime(value) {
+  if (!value) {
+    return '??:??';
+  }
+
+  return new Date(value).toLocaleTimeString('ru-RU', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false
+  });
+}
+
+function groupBy(items, keyFunction) {
+  return items.reduce((groups, item) => {
+    const key = keyFunction(item);
+    groups[key] = groups[key] || [];
+    groups[key].push(item);
+    return groups;
+  }, {});
 }
 
 async function showProjectsDashboard() {
@@ -1294,6 +1495,63 @@ async function setSleepDisabled(enabled) {
   ]);
 }
 
+async function installCalendarAgent() {
+  const plist = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key>
+    <string>/Users/grachev90</string>
+    <key>PATH</key>
+    <string>/Users/grachev90/.nvm/versions/node/v24.14.0/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+  <key>Label</key>
+  <string>com.lifeos.calendar-sync</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>${escapeXml(process.execPath)}</string>
+    <string>scripts/lifeos.mjs</string>
+    <string>calendar</string>
+    <string>sync</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StandardErrorPath</key>
+  <string>/Users/grachev90/Library/Logs/lifeos-calendar-sync.err.log</string>
+  <key>StandardOutPath</key>
+  <string>/Users/grachev90/Library/Logs/lifeos-calendar-sync.out.log</string>
+  <key>StartInterval</key>
+  <integer>10800</integer>
+  <key>WorkingDirectory</key>
+  <string>/Users/grachev90/life-os</string>
+</dict>
+</plist>
+`;
+
+  const agent = serverAgents.find((item) => item.label === 'com.lifeos.calendar-sync');
+  await writeFile(agent.plist, plist, 'utf8');
+
+  const status = await getAgentStatus(agent);
+  if (status !== 'not loaded') {
+    await bootoutAgent(agent);
+  }
+
+  await bootstrapAgent(agent);
+  await run('launchctl', ['kickstart', '-k', `gui/${userId}/${agent.label}`]);
+  console.log('Calendar sync agent installed. Interval: 3 hours.');
+}
+
+function escapeXml(value) {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
 async function bootstrapAgent(agent) {
   const status = await getAgentStatus(agent);
 
@@ -1445,6 +1703,31 @@ function printFocusLines(content) {
   if (printed === 0) {
     console.log('- No focus found in areas.md.');
   }
+}
+
+function printCalendarTodayBlock(content) {
+  const today = new Date().toISOString().slice(0, 10);
+  const lines = content.split('\n');
+  const events = [];
+  let inToday = false;
+
+  for (const line of lines) {
+    if (line === `## ${today}`) {
+      inToday = true;
+      continue;
+    }
+
+    if (inToday && line.startsWith('## ')) {
+      break;
+    }
+
+    if (inToday && line.startsWith('- ')) {
+      events.push(line.slice(2).trim());
+    }
+  }
+
+  console.log('## Calendar');
+  printList(events, 'На сегодня событий в calendar.md нет.');
 }
 
 function uniqueItems(items) {
@@ -1635,6 +1918,36 @@ function runCapture(command, commandArgs) {
     child.stderr.on('data', (chunk) => stderr.push(chunk));
     child.on('error', reject);
     child.on('close', (code) => {
+      if (code === 0) {
+        resolve(Buffer.concat(stdout).toString('utf8'));
+      } else {
+        reject(new Error(Buffer.concat(stderr).toString('utf8') || `${command} ${commandArgs.join(' ')} failed with ${code}`));
+      }
+    });
+  });
+}
+
+function runCaptureWithTimeout(command, commandArgs, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, commandArgs, {
+      cwd: root
+    });
+    const stdout = [];
+    const stderr = [];
+    const timeout = setTimeout(() => {
+      child.kill('SIGTERM');
+      reject(new Error(`${command} timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+
+    child.stdout.on('data', (chunk) => stdout.push(chunk));
+    child.stderr.on('data', (chunk) => stderr.push(chunk));
+    child.on('error', (error) => {
+      clearTimeout(timeout);
+      reject(error);
+    });
+    child.on('close', (code) => {
+      clearTimeout(timeout);
+
       if (code === 0) {
         resolve(Buffer.concat(stdout).toString('utf8'));
       } else {
