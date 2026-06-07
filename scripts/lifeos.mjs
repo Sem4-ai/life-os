@@ -16,6 +16,10 @@ const userId = '501';
 const launchAgentDir = '/Users/grachev90/Library/LaunchAgents';
 const serverAgents = [
   {
+    label: 'com.lifeos.obsidian-sync',
+    plist: `${launchAgentDir}/com.lifeos.obsidian-sync.plist`
+  },
+  {
     label: 'com.lifeos.todoist-sync',
     plist: `${launchAgentDir}/com.lifeos.todoist-sync.plist`
   },
