@@ -10,6 +10,7 @@ const areasPath = new URL('../areas.md', import.meta.url);
 const healthPath = new URL('../health.md', import.meta.url);
 const inboxPath = new URL('../inbox.md', import.meta.url);
 const projectsPath = new URL('../projects.md', import.meta.url);
+const meetingInboxPath = new URL('../meeting-inbox', import.meta.url);
 const envPath = new URL('../.env', import.meta.url);
 const obsidianVaultPath = '/Users/grachev90/Library/Mobile Documents/iCloud~md~obsidian/Documents/life-os';
 const userId = '501';
@@ -111,6 +112,11 @@ async function main() {
     return;
   }
 
+  if (domain === 'meeting' && action === 'new') {
+    await createMeetingNote(rest);
+    return;
+  }
+
   if (domain === 'todoist' && action === 'pull') {
     await pullTodoist();
     return;
@@ -171,6 +177,7 @@ Commands:
   npm run lifeos -- health add-json '{"date":"2026-06-07","sleepHours":6.2,"steps":7200}'
   npm run lifeos -- health latest
   npm run lifeos -- obsidian sync
+  npm run lifeos -- meeting new project-slug "Meeting title"
   npm run lifeos -- todoist projects
   npm run lifeos -- todoist list
   npm run lifeos -- todoist pull
@@ -592,6 +599,100 @@ async function syncObsidianLoop() {
 
     await sleep(60_000);
   }
+}
+
+async function createMeetingNote(args) {
+  const [projectSlug, ...titleParts] = args;
+  const title = titleParts.join(' ').trim();
+
+  if (!projectSlug || !title) {
+    throw new Error('Usage: npm run lifeos -- meeting new project-slug "Meeting title"');
+  }
+
+  const date = new Date().toISOString().slice(0, 10);
+  const filename = `${date}-${slugify(`${projectSlug}-${title}`)}.md`;
+  const filePath = new URL(`../meeting-inbox/${filename}`, import.meta.url);
+
+  if (existsSync(filePath)) {
+    throw new Error(`Meeting note already exists: meeting-inbox/${filename}`);
+  }
+
+  await mkdir(meetingInboxPath, { recursive: true });
+  await writeFile(filePath, formatMeetingInboxNote({ date, projectSlug, title }), 'utf8');
+  await syncObsidian();
+  console.log(`Created meeting note: meeting-inbox/${filename}`);
+}
+
+function formatMeetingInboxNote({ date, projectSlug, title }) {
+  return `# ${date} / ${title}
+
+Проект: [[project-notes/work/${projectSlug}/project|${projectSlug}]]
+Статус обработки: raw
+
+## Контекст
+
+- требует уточнения
+
+## Участники
+
+- требует уточнения
+
+## Сырая расшифровка
+
+Вставить текст расшифровки сюда.
+
+## Что извлечь при обработке
+
+- Контекст для проекта
+- Краткое саммари встречи
+- Решения
+- Открытые вопросы
+- Задачи / следующие действия
+
+`;
+}
+
+function slugify(value) {
+  const transliterated = value
+    .toLowerCase()
+    .replace(/а/g, 'a')
+    .replace(/б/g, 'b')
+    .replace(/в/g, 'v')
+    .replace(/г/g, 'g')
+    .replace(/д/g, 'd')
+    .replace(/е/g, 'e')
+    .replace(/ё/g, 'e')
+    .replace(/ж/g, 'zh')
+    .replace(/з/g, 'z')
+    .replace(/и/g, 'i')
+    .replace(/й/g, 'y')
+    .replace(/к/g, 'k')
+    .replace(/л/g, 'l')
+    .replace(/м/g, 'm')
+    .replace(/н/g, 'n')
+    .replace(/о/g, 'o')
+    .replace(/п/g, 'p')
+    .replace(/р/g, 'r')
+    .replace(/с/g, 's')
+    .replace(/т/g, 't')
+    .replace(/у/g, 'u')
+    .replace(/ф/g, 'f')
+    .replace(/х/g, 'h')
+    .replace(/ц/g, 'c')
+    .replace(/ч/g, 'ch')
+    .replace(/ш/g, 'sh')
+    .replace(/щ/g, 'sch')
+    .replace(/ъ/g, '')
+    .replace(/ы/g, 'y')
+    .replace(/ь/g, '')
+    .replace(/э/g, 'e')
+    .replace(/ю/g, 'yu')
+    .replace(/я/g, 'ya');
+
+  return transliterated
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 80) || 'meeting';
 }
 
 async function syncMarkdownTree(sourceRoot, targetRoot) {
