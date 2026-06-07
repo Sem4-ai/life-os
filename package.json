@@ -14,6 +14,8 @@
     "server:on": "node scripts/lifeos.mjs server on",
     "server:off": "node scripts/lifeos.mjs server off",
     "server:status": "node scripts/lifeos.mjs server status",
+    "health:add-json": "node scripts/lifeos.mjs health add-json",
+    "health:latest": "node scripts/lifeos.mjs health latest",
     "todoist:projects": "node scripts/lifeos.mjs todoist projects",
     "todoist:list": "node scripts/lifeos.mjs todoist list",
     "todoist:pull": "node scripts/lifeos.mjs todoist pull",

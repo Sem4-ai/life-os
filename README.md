@@ -52,6 +52,42 @@ Git хранит историю изменений и позволяет без�
 
 Правило: интеграция должна либо пополнять `inbox.md`, либо давать краткий контекст для обзора. Если она требует постоянного ручного обслуживания, ее не подключаем.
 
+## Health integration
+
+Apple Health / Apple Watch не читаются напрямую с Mac. Данные передаются с iPhone через Shortcuts в виде краткого daily snapshot.
+
+Файл:
+
+- `health.md` - краткая история snapshots и последний статус восстановления/активности.
+
+Команды:
+
+```bash
+npm run lifeos -- health add-json '{"date":"2026-06-07","sleepHours":6.2,"steps":7200,"activeEnergyKcal":420,"exerciseMinutes":20,"restingHeartRate":62,"weightKg":85}'
+```
+
+Добавляет или обновляет health snapshot за дату.
+
+```bash
+npm run lifeos -- health latest
+```
+
+Показывает последний health snapshot и мягкие рекомендации по режиму.
+
+Рекомендуемый iPhone Shortcut:
+
+1. Получить данные Health за сегодня: сон, шаги, активная энергия, минуты упражнений, часы стоя, пульс покоя, HRV, вес.
+2. Собрать JSON с полями `date`, `sleepHours`, `steps`, `activeEnergyKcal`, `exerciseMinutes`, `standHours`, `restingHeartRate`, `hrvMs`, `weightKg`.
+3. Выполнить на Mac через SSH:
+
+```bash
+cd /Users/grachev90/life-os
+PATH=/Users/grachev90/.nvm/versions/node/v24.14.0/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin npm run lifeos -- health add-json '<JSON>'
+PATH=/Users/grachev90/.nvm/versions/node/v24.14.0/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin npm run lifeos -- save "Update health snapshot"
+```
+
+Данные используются для рекомендаций по режиму, а не для медицинских выводов.
+
 ## Todoist agent
 
 Первый внешний источник задач - Todoist.

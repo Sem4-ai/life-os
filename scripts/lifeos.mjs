@@ -6,6 +6,7 @@ import { spawn } from 'node:child_process';
 
 const root = new URL('../', import.meta.url);
 const areasPath = new URL('../areas.md', import.meta.url);
+const healthPath = new URL('../health.md', import.meta.url);
 const inboxPath = new URL('../inbox.md', import.meta.url);
 const projectsPath = new URL('../projects.md', import.meta.url);
 const envPath = new URL('../.env', import.meta.url);
@@ -84,6 +85,16 @@ async function main() {
     return;
   }
 
+  if (domain === 'health' && action === 'add-json') {
+    await addHealthJson(rest.join(' ').trim());
+    return;
+  }
+
+  if (domain === 'health' && action === 'latest') {
+    await showLatestHealth();
+    return;
+  }
+
   if (domain === 'todoist' && action === 'pull') {
     await pullTodoist();
     return;
@@ -136,6 +147,8 @@ Commands:
   npm run lifeos -- server on
   npm run lifeos -- server off
   npm run lifeos -- server status
+  npm run lifeos -- health add-json '{"date":"2026-06-07","sleepHours":6.2,"steps":7200}'
+  npm run lifeos -- health latest
   npm run lifeos -- todoist projects
   npm run lifeos -- todoist list
   npm run lifeos -- todoist pull
@@ -182,6 +195,8 @@ async function showToday() {
   console.log('## Focus');
   printFocusLines(areas);
   console.log('');
+  await printHealthBlock();
+  console.log('');
   console.log('## Todoist');
 
   if (tasks.length === 0) {
@@ -222,6 +237,8 @@ async function showDailyReview() {
   console.log('');
   console.log('## Фокусы');
   printFocusLines(areas);
+  console.log('');
+  await printHealthBlock();
   console.log('');
   console.log('## Активные задачи Todoist');
   printList(tasks.map((task) => task.content), 'Нет активных задач Todoist.');
@@ -473,6 +490,165 @@ async function showServerStatus() {
     const status = await getAgentStatus(agent);
     console.log(`${agent.label}: ${status}`);
   }
+}
+
+async function addHealthJson(jsonText) {
+  if (!jsonText) {
+    jsonText = await readStdin();
+  }
+
+  if (!jsonText.trim()) {
+    throw new Error('Usage: npm run lifeos -- health add-json \'{"date":"2026-06-07","sleepHours":6.2,"steps":7200}\'');
+  }
+
+  const snapshot = JSON.parse(jsonText);
+  const normalized = normalizeHealthSnapshot(snapshot);
+  const existing = await safeRead(healthPath);
+  const next = upsertHealthSnapshot(existing, normalized);
+  await writeFile(healthPath, next, 'utf8');
+  console.log(`Added health snapshot for ${normalized.date}.`);
+}
+
+async function showLatestHealth() {
+  const snapshots = parseHealthSnapshots(await safeRead(healthPath));
+
+  if (snapshots.length === 0) {
+    console.log('No health snapshots found.');
+    return;
+  }
+
+  const latest = snapshots[snapshots.length - 1];
+  console.log(formatHealthSnapshot(latest));
+}
+
+async function printHealthBlock() {
+  const snapshots = parseHealthSnapshots(await safeRead(healthPath));
+
+  console.log('## Health');
+
+  if (snapshots.length === 0) {
+    console.log('- Нет health snapshot. Запусти iPhone Shortcut для синхронизации Apple Health.');
+    return;
+  }
+
+  const latest = snapshots[snapshots.length - 1];
+  for (const line of formatHealthSnapshot(latest).split('\n')) {
+    console.log(`- ${line}`);
+  }
+}
+
+function normalizeHealthSnapshot(snapshot) {
+  const date = String(snapshot.date || new Date().toISOString().slice(0, 10));
+
+  return {
+    date,
+    sleepHours: numberOrNull(snapshot.sleepHours),
+    steps: integerOrNull(snapshot.steps),
+    activeEnergyKcal: integerOrNull(snapshot.activeEnergyKcal),
+    exerciseMinutes: integerOrNull(snapshot.exerciseMinutes),
+    standHours: integerOrNull(snapshot.standHours),
+    restingHeartRate: integerOrNull(snapshot.restingHeartRate),
+    hrvMs: integerOrNull(snapshot.hrvMs),
+    weightKg: numberOrNull(snapshot.weightKg),
+    source: snapshot.source ? String(snapshot.source) : 'Apple Health / Apple Watch'
+  };
+}
+
+function upsertHealthSnapshot(existing, snapshot) {
+  const snapshots = parseHealthSnapshots(existing).filter((item) => item.date !== snapshot.date);
+  snapshots.push(snapshot);
+  snapshots.sort((left, right) => left.date.localeCompare(right.date));
+
+  const lines = [
+    '# Health',
+    '',
+    'Краткие daily snapshots из Apple Health / Apple Watch.',
+    '',
+    'Правило: использовать эти данные только для мягких рекомендаций по режиму, восстановлению и нагрузке. Не делать медицинских выводов.',
+    '',
+    '## Snapshots',
+    ''
+  ];
+
+  for (const item of snapshots) {
+    lines.push(`- ${JSON.stringify(item)}`);
+  }
+
+  lines.push('');
+  lines.push('## Latest');
+  lines.push('');
+  lines.push(formatHealthSnapshot(snapshots[snapshots.length - 1]));
+  lines.push('');
+
+  return `${lines.join('\n')}`;
+}
+
+function parseHealthSnapshots(content) {
+  return content
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith('- {'))
+    .map((line) => {
+      try {
+        return JSON.parse(line.slice(2));
+      } catch {
+        return null;
+      }
+    })
+    .filter(Boolean)
+    .sort((left, right) => left.date.localeCompare(right.date));
+}
+
+function formatHealthSnapshot(snapshot) {
+  const lines = [`Дата: ${snapshot.date}`];
+
+  if (snapshot.sleepHours != null) lines.push(`Сон: ${snapshot.sleepHours} ч`);
+  if (snapshot.steps != null) lines.push(`Шаги: ${snapshot.steps}`);
+  if (snapshot.activeEnergyKcal != null) lines.push(`Активная энергия: ${snapshot.activeEnergyKcal} ккал`);
+  if (snapshot.exerciseMinutes != null) lines.push(`Упражнения: ${snapshot.exerciseMinutes} мин`);
+  if (snapshot.standHours != null) lines.push(`Часы стоя: ${snapshot.standHours}`);
+  if (snapshot.restingHeartRate != null) lines.push(`Пульс покоя: ${snapshot.restingHeartRate}`);
+  if (snapshot.hrvMs != null) lines.push(`HRV: ${snapshot.hrvMs} мс`);
+  if (snapshot.weightKg != null) lines.push(`Вес: ${snapshot.weightKg} кг`);
+
+  const recommendations = healthRecommendations(snapshot);
+  if (recommendations.length > 0) {
+    lines.push(`Режим: ${recommendations.join(' ')}`);
+  }
+
+  return lines.join('\n');
+}
+
+function healthRecommendations(snapshot) {
+  const recommendations = [];
+
+  if (snapshot.sleepHours != null && snapshot.sleepHours < 6) {
+    recommendations.push('Сон ниже минимума; сегодня не планировать тяжелую нагрузку и поставить ранний отбой.');
+  } else if (snapshot.sleepHours != null && snapshot.sleepHours < 7) {
+    recommendations.push('Сон пограничный; держать день без лишнего перегруза.');
+  }
+
+  if (snapshot.steps != null && snapshot.steps < 5000) {
+    recommendations.push('Добавить короткую прогулку 20-30 минут.');
+  }
+
+  if (snapshot.exerciseMinutes != null && snapshot.exerciseMinutes === 0 && snapshot.sleepHours != null && snapshot.sleepHours >= 6.5) {
+    recommendations.push('Можно добавить легкую тренировку или прогулку без форсирования.');
+  }
+
+  return recommendations;
+}
+
+function numberOrNull(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.round(number * 10) / 10 : null;
+}
+
+function integerOrNull(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.round(number) : null;
 }
 
 async function setSleepDisabled(enabled) {
@@ -766,6 +942,15 @@ async function safeRead(path) {
     }
     throw error;
   }
+}
+
+function readStdin() {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    process.stdin.on('data', (chunk) => chunks.push(chunk));
+    process.stdin.on('error', reject);
+    process.stdin.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+  });
 }
 
 function removeUndefined(value) {
