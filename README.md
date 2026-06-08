@@ -124,6 +124,8 @@ npm run lifeos -- health latest
 
 Рекомендуемый iPhone Shortcut:
 
+Полная сборка лежит в `shortcuts/lifeos-health-sync.md`.
+
 1. Получить данные Health за сегодня: сон, шаги, активная энергия, минуты упражнений, часы стоя, пульс покоя, HRV, вес.
 2. Собрать JSON с полями `date`, `sleepHours`, `steps`, `activeEnergyKcal`, `exerciseMinutes`, `standHours`, `restingHeartRate`, `hrvMs`, `weightKg`.
 3. Выполнить на Mac через SSH:
