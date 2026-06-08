@@ -18,7 +18,10 @@ function main() {
 
   run('node', ['scripts/lifeos.mjs', 'health', 'add-json', json]);
   run('node', ['scripts/lifeos.mjs', 'obsidian', 'sync']);
-  run('node', ['scripts/lifeos.mjs', 'save', 'Update health snapshot']);
+
+  if (!args.includes('--no-save')) {
+    run('node', ['scripts/lifeos.mjs', 'save', 'Update health snapshot']);
+  }
 }
 
 function readInputJson() {
@@ -59,4 +62,3 @@ function fail(message) {
   console.error(message);
   process.exit(1);
 }
-
