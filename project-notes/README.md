@@ -15,3 +15,4 @@
 - [[work/support-move-2026-06-16/project|Переезд саппорта 16 июня 2026]]
 - [[work/gazpromneft/project|Газпромнефть]]
 - [[work/belka-surge/project|Белка Surge]]
+- [[work/davalcheskoe-syre/project|Давальческое сырьё]]

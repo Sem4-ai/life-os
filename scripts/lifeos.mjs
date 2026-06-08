@@ -1080,6 +1080,13 @@ function projectAliases(slug, title) {
     aliases.add('саппорт');
     aliases.add('переезд');
   }
+  if (slug === 'davalcheskoe-syre') {
+    aliases.add('давальческое');
+    aliases.add('давальческое сырье');
+    aliases.add('давальческое сырьё');
+    aliases.add('сырье');
+    aliases.add('сырьё');
+  }
 
   return [...aliases];
 }
