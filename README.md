@@ -82,6 +82,89 @@ npm run lifeos -- calendar agent install
 
 Правило: календарные события сами по себе не становятся задачами. После встречи запись и расшифровка обрабатываются отдельно через `meeting-inbox/`.
 
+## Telegram bridge
+
+Telegram используется как легкий мобильный вход/выход для LifeOS.
+
+Что умеет бот:
+
+- принимать обычный текст и сохранять его в `inbox.md`;
+- добавлять задачи в `inbox.md` и Todoist;
+- показывать `today`, календарь на сегодня, dashboard проектов и inbox;
+- отправлять исходящие сообщения через команду `telegram send`.
+
+Важно: ответы бота могут содержать данные LifeOS из markdown, Todoist и календаря. Поэтому доступ ограничивается `TELEGRAM_CHAT_ID` / `TELEGRAM_ALLOWED_CHAT_IDS`.
+
+### Настройка
+
+1. Создать бота в Telegram через `@BotFather`.
+2. Добавить в `.env`:
+
+```text
+TELEGRAM_BOT_TOKEN=
+TELEGRAM_CHAT_ID=
+TELEGRAM_ALLOWED_CHAT_IDS=
+```
+
+3. Написать боту `/id`.
+4. Запустить один polling:
+
+```bash
+npm run lifeos -- telegram poll
+```
+
+5. В ответе бот покажет `chat_id`; его нужно положить в `TELEGRAM_CHAT_ID`.
+
+Если бот должен писать в канал, добавь бота в канал администратором и укажи chat id канала. Для приватных каналов id обычно начинается с `-100`.
+
+### Команды
+
+```bash
+npm run lifeos -- telegram status
+```
+
+Проверяет токен бота и показывает, настроен ли `TELEGRAM_CHAT_ID`.
+
+```bash
+npm run lifeos -- telegram send "Текст"
+```
+
+Отправляет сообщение в `TELEGRAM_CHAT_ID`.
+
+```bash
+npm run lifeos -- telegram poll
+```
+
+Один раз забирает входящие сообщения Telegram и отвечает на них.
+
+```bash
+npm run lifeos -- telegram agent install
+```
+
+Устанавливает фоновый агент `com.lifeos.telegram`, который опрашивает Telegram каждые 5 секунд.
+
+После установки агент включается/выключается вместе с серверным режимом:
+
+```bash
+npm run lifeos -- server on
+npm run lifeos -- server off
+```
+
+### Команды в Telegram
+
+```text
+/today
+/calendar
+/projects
+/inbox
+/task текст задачи
+/done текст задачи
+/note текст заметки
+/id
+```
+
+Обычный текст без команды сохраняется в `inbox.md`.
+
 ## Meeting workflow
 
 Встречи записываются на iPhone, расшифровываются в текст и попадают в `meeting-inbox/`.

@@ -1289,6 +1289,299 @@ function formatMeetingInboxNote({ date, projectSlug, title }) {
 `;
 }
 
+async function telegramSend(text) {
+  if (!text) {
+    throw new Error('Usage: npm run lifeos -- telegram send "text"');
+  }
+
+  const env = await loadEnv();
+  const token = requireEnv(env, 'TELEGRAM_BOT_TOKEN');
+  const chatId = requireEnv(env, 'TELEGRAM_CHAT_ID');
+  await sendTelegramMessage(token, chatId, text);
+  console.log('Telegram message sent.');
+}
+
+async function telegramPollOnce() {
+  const env = await loadEnv();
+  const token = requireEnv(env, 'TELEGRAM_BOT_TOKEN');
+  const state = await loadTelegramState();
+  const updates = await getTelegramUpdates(token, state.updateOffset || 0);
+
+  if (updates.length === 0) {
+    console.log('No Telegram updates.');
+    return;
+  }
+
+  let processed = 0;
+  let skipped = 0;
+
+  for (const update of updates) {
+    state.updateOffset = Math.max(state.updateOffset || 0, update.update_id + 1);
+
+    const incoming = telegramIncomingMessage(update);
+    if (!incoming) {
+      continue;
+    }
+
+    if (!isAllowedTelegramChat(env, incoming.chatId) && !isTelegramSetupMessage(env, incoming.text)) {
+      skipped += 1;
+      continue;
+    }
+
+    const reply = await handleTelegramText(incoming.text, incoming);
+    await sendTelegramMessage(token, incoming.chatId, reply);
+    processed += 1;
+  }
+
+  await saveTelegramState(state);
+  console.log(`Telegram poll complete. Processed: ${processed}. Skipped: ${skipped}.`);
+}
+
+async function telegramPollLoop() {
+  while (true) {
+    try {
+      await telegramPollOnce();
+    } catch (error) {
+      console.error(`[${new Date().toISOString()}] Telegram poll failed: ${error.message}`);
+    }
+
+    await sleep(5_000);
+  }
+}
+
+async function telegramStatus() {
+  const env = await loadEnv();
+  const token = requireEnv(env, 'TELEGRAM_BOT_TOKEN');
+  const me = await telegramRequest(token, 'getMe');
+  const state = await loadTelegramState();
+  const chatIdStatus = env.TELEGRAM_CHAT_ID ? 'configured' : 'not configured';
+
+  console.log(`Bot: @${me.result.username || me.result.first_name}`);
+  console.log(`TELEGRAM_CHAT_ID: ${chatIdStatus}`);
+  console.log(`Update offset: ${state.updateOffset || 0}`);
+  console.log('Tip: send /id to the bot, then run `npm run lifeos -- telegram poll` to get the chat id.');
+}
+
+async function handleTelegramText(rawText, incoming) {
+  const text = rawText.trim();
+
+  if (!text) {
+    return 'Пустое сообщение не сохранил.';
+  }
+
+  if (text === '/start' || text === '/help') {
+    return telegramHelpText();
+  }
+
+  if (text === '/id') {
+    return `chat_id: ${incoming.chatId}`;
+  }
+
+  if (text === '/today' || /^что сегодня\??$/i.test(text)) {
+    return await captureOutput(() => showToday());
+  }
+
+  if (text === '/daily') {
+    return await captureOutput(() => showDailyReview());
+  }
+
+  if (text === '/calendar') {
+    return await captureOutput(() => showCalendarToday());
+  }
+
+  if (text === '/projects') {
+    return await captureOutput(() => showProjectsDashboard());
+  }
+
+  if (text === '/inbox') {
+    const inbox = await safeRead(inboxPath);
+    const items = parseInboxItems(inbox);
+    return items.length === 0 ? 'Inbox пуст.' : `Inbox:\n${items.map((item) => `- ${item}`).join('\n')}`;
+  }
+
+  if (text.startsWith('/task ')) {
+    const task = text.slice('/task '.length).trim();
+    await addTask(task);
+    return `Добавил задачу: ${task}`;
+  }
+
+  if (text.startsWith('/done ')) {
+    const task = text.slice('/done '.length).trim();
+    await completeTodoistTask(task);
+    return `Закрыл задачу: ${task}`;
+  }
+
+  if (text.startsWith('/note ')) {
+    const note = text.slice('/note '.length).trim();
+    await addInbox(note);
+    return `Сохранил в inbox: ${note}`;
+  }
+
+  if (/^(задача|task)[:\s]/i.test(text)) {
+    const task = text.replace(/^(задача|task)[:\s]+/i, '').trim();
+    await addTask(task);
+    return `Добавил задачу: ${task}`;
+  }
+
+  await addInbox(text);
+  return `Сохранил в inbox: ${text}`;
+}
+
+function telegramHelpText() {
+  return [
+    'LifeOS Telegram',
+    '',
+    '/today - день и задачи',
+    '/calendar - календарь сегодня',
+    '/projects - dashboard проектов',
+    '/inbox - входящие',
+    '/task текст - добавить задачу в LifeOS/Todoist',
+    '/done текст - закрыть задачу',
+    '/note текст - сохранить заметку в inbox',
+    '/id - показать chat_id',
+    '',
+    'Обычный текст я сохраняю в inbox.md.'
+  ].join('\n');
+}
+
+function telegramIncomingMessage(update) {
+  const message = update.message || update.channel_post;
+
+  if (!message || !message.chat || typeof message.text !== 'string') {
+    return null;
+  }
+
+  return {
+    chatId: String(message.chat.id),
+    text: message.text,
+    messageId: message.message_id
+  };
+}
+
+function isAllowedTelegramChat(env, chatId) {
+  const configured = String(env.TELEGRAM_ALLOWED_CHAT_IDS || env.TELEGRAM_CHAT_ID || '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+  return configured.length > 0 && configured.includes(String(chatId));
+}
+
+function isTelegramSetupMessage(env, text) {
+  const configured = String(env.TELEGRAM_ALLOWED_CHAT_IDS || env.TELEGRAM_CHAT_ID || '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+  return configured.length === 0 && ['/id', '/start', '/help'].includes(text.trim());
+}
+
+async function getTelegramUpdates(token, offset) {
+  const query = new URLSearchParams({
+    timeout: '0',
+    allowed_updates: JSON.stringify(['message', 'channel_post'])
+  });
+
+  if (offset) {
+    query.set('offset', String(offset));
+  }
+
+  const data = await telegramRequest(token, `getUpdates?${query.toString()}`);
+  return data.result || [];
+}
+
+async function sendTelegramMessage(token, chatId, text) {
+  const chunks = splitTelegramText(text);
+
+  for (const chunk of chunks) {
+    await telegramRequest(token, 'sendMessage', {
+      method: 'POST',
+      body: {
+        chat_id: chatId,
+        text: chunk,
+        disable_web_page_preview: true
+      }
+    });
+  }
+}
+
+function splitTelegramText(text) {
+  const normalized = String(text || '').trim() || 'Готово.';
+  const chunks = [];
+  let remaining = normalized;
+
+  while (remaining.length > 3900) {
+    const index = Math.max(
+      remaining.lastIndexOf('\n', 3900),
+      remaining.lastIndexOf(' ', 3900)
+    );
+    const splitAt = index > 1000 ? index : 3900;
+    chunks.push(remaining.slice(0, splitAt).trim());
+    remaining = remaining.slice(splitAt).trim();
+  }
+
+  chunks.push(remaining);
+  return chunks;
+}
+
+async function telegramRequest(token, method, options = {}) {
+  const response = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
+    method: options.method || 'GET',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: options.body ? JSON.stringify(removeUndefined(options.body)) : undefined
+  });
+
+  const body = await response.text();
+  const data = body ? JSON.parse(body) : {};
+
+  if (!response.ok || data.ok === false) {
+    throw new Error(`Telegram API error ${response.status}: ${data.description || body}`);
+  }
+
+  return data;
+}
+
+async function loadTelegramState() {
+  const content = await safeRead(telegramStatePath);
+
+  if (!content.trim()) {
+    return { updateOffset: 0 };
+  }
+
+  try {
+    const state = JSON.parse(content);
+    return {
+      updateOffset: Number.isInteger(state.updateOffset) ? state.updateOffset : 0
+    };
+  } catch {
+    return { updateOffset: 0 };
+  }
+}
+
+async function saveTelegramState(state) {
+  await writeFile(telegramStatePath, `${JSON.stringify(state, null, 2)}\n`, 'utf8');
+}
+
+async function captureOutput(callback) {
+  const originalLog = console.log;
+  const originalWarn = console.warn;
+  const lines = [];
+
+  console.log = (...items) => lines.push(items.join(' '));
+  console.warn = (...items) => lines.push(items.join(' '));
+
+  try {
+    await callback();
+  } finally {
+    console.log = originalLog;
+    console.warn = originalWarn;
+  }
+
+  return lines.join('\n').trim() || 'Готово.';
+}
+
 function slugify(value) {
   const transliterated = value
     .toLowerCase()
@@ -1653,6 +1946,54 @@ async function installCalendarAgent() {
   await bootstrapAgent(agent);
   await run('launchctl', ['kickstart', '-k', `gui/${userId}/${agent.label}`]);
   console.log('Calendar sync agent installed. Interval: 3 hours.');
+}
+
+async function installTelegramAgent() {
+  const plist = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key>
+    <string>/Users/grachev90</string>
+    <key>PATH</key>
+    <string>/Users/grachev90/.nvm/versions/node/v24.14.0/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+  <key>Label</key>
+  <string>com.lifeos.telegram</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>${escapeXml(process.execPath)}</string>
+    <string>scripts/lifeos.mjs</string>
+    <string>telegram</string>
+    <string>poll-loop</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardErrorPath</key>
+  <string>/Users/grachev90/Library/Logs/lifeos-telegram.err.log</string>
+  <key>StandardOutPath</key>
+  <string>/Users/grachev90/Library/Logs/lifeos-telegram.out.log</string>
+  <key>WorkingDirectory</key>
+  <string>/Users/grachev90/life-os</string>
+</dict>
+</plist>
+`;
+
+  const agent = serverAgents.find((item) => item.label === 'com.lifeos.telegram');
+  await writeFile(agent.plist, plist, 'utf8');
+
+  const status = await getAgentStatus(agent);
+  if (status !== 'not loaded') {
+    await bootoutAgent(agent);
+  }
+
+  await bootstrapAgent(agent);
+  await run('launchctl', ['kickstart', '-k', `gui/${userId}/${agent.label}`]);
+  console.log('Telegram agent installed. Poll interval: 5 seconds.');
 }
 
 function escapeXml(value) {
