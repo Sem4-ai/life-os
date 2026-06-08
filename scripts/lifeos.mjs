@@ -736,63 +736,70 @@ async function showCalendarToday() {
 
 async function getCalendarEvents() {
   const script = `
-const Calendar = Application('Calendar');
-const now = new Date();
-const from = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-const to = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000);
-const events = [];
+import Foundation
+import EventKit
 
-function readValue(callback) {
-  try {
-    const value = callback();
-    return value == null ? '' : String(value);
-  } catch (error) {
-    return '';
-  }
-}
+let store = EKEventStore()
+let status = EKEventStore.authorizationStatus(for: .event)
 
-for (const calendar of Calendar.calendars()) {
-  const calendarName = readValue(() => calendar.name());
-  let calendarEvents = [];
+if status == .notDetermined {
+  let semaphore = DispatchSemaphore(value: 0)
+  var granted = false
 
-  try {
-    calendarEvents = calendar.events.whose({
-      _and: [
-        { startDate: { _greaterThan: from } },
-        { startDate: { _lessThan: to } }
-      ]
-    })();
-  } catch (error) {
-    calendarEvents = [];
-  }
-
-  for (const event of calendarEvents) {
-    const startDate = event.startDate();
-    const endDate = event.endDate();
-
-    if (!startDate || startDate < from || startDate > to) {
-      continue;
+  if #available(macOS 14.0, *) {
+    store.requestFullAccessToEvents { accessGranted, _ in
+      granted = accessGranted
+      semaphore.signal()
     }
-
-    events.push({
-      title: readValue(() => event.summary()),
-      start: startDate ? startDate.toISOString() : '',
-      end: endDate ? endDate.toISOString() : '',
-      calendar: calendarName,
-      location: readValue(() => event.location())
-    });
+  } else {
+    store.requestAccess(to: .event) { accessGranted, _ in
+      granted = accessGranted
+      semaphore.signal()
+    }
   }
+
+  _ = semaphore.wait(timeout: .now() + 30)
+
+  if !granted {
+    fputs("Calendar access was not granted.\\n", stderr)
+    exit(2)
+  }
+} else if ![3, 4].contains(status.rawValue) {
+  fputs("Calendar access is not authorized. Status: \\(status.rawValue)\\n", stderr)
+  exit(2)
 }
 
-JSON.stringify(events);
+let now = Date()
+let from = now.addingTimeInterval(-24 * 60 * 60)
+let to = now.addingTimeInterval(14 * 24 * 60 * 60)
+let predicate = store.predicateForEvents(withStart: from, end: to, calendars: nil)
+let formatter = ISO8601DateFormatter()
+
+let events = store.events(matching: predicate)
+  .filter { event in
+    event.startDate != nil && event.startDate >= from && event.startDate <= to
+  }
+  .map { event -> [String: Any] in
+    [
+      "title": event.title ?? "",
+      "start": formatter.string(from: event.startDate),
+      "end": formatter.string(from: event.endDate),
+      "calendar": event.calendar.title,
+      "location": event.location ?? "",
+      "allDay": event.isAllDay
+    ]
+  }
+
+let data = try JSONSerialization.data(withJSONObject: events, options: [])
+print(String(data: data, encoding: .utf8) ?? "[]")
 `;
 
   try {
-    const output = await runCaptureWithTimeout('osascript', ['-l', 'JavaScript', '-e', script], 45_000);
+    const output = await runCaptureWithTimeout('swift', ['-e', script], 45_000);
     const parsed = JSON.parse(output.trim() || '[]');
     return parsed.filter((event) => event.title && event.start);
   } catch (error) {
-    throw new Error(`Calendar sync failed. Открой System Settings -> Privacy & Security -> Automation/Calendars и разреши Terminal/Node доступ к Calendar. Detail: ${error.message}`);
+    throw new Error(`Calendar sync failed. Открой System Settings -> Privacy & Security -> Calendars и разреши Terminal/Node доступ к календарю. Detail: ${error.message}`);
   }
 }
 
@@ -831,11 +838,12 @@ function formatCalendarFile(events) {
 
     for (const event of eventsByDate[date]) {
       const timeRange = `${formatEventTime(event.start)}-${formatEventTime(event.end)}`;
+      const displayedTime = event.allDay ? 'all-day' : timeRange;
       const project = event.projectSlug
         ? `[[project-notes/work/${event.projectSlug}/project|${event.project}]]`
         : event.project;
       const location = event.location ? `; место: ${event.location}` : '';
-      lines.push(`- ${timeRange} | ${project} | ${event.title} (${event.calendar}${location})`);
+      lines.push(`- ${displayedTime} | ${project} | ${event.title} (${event.calendar}${location})`);
     }
 
     lines.push('');
@@ -1043,9 +1051,13 @@ function projectAliases(slug, title) {
     slug.toLowerCase().replace(/-/g, ' ')
   ]);
 
-  if (slug === 'epl') aliases.add('эпл');
+  if (slug === 'epl') {
+    aliases.add('эпл');
+    aliases.add('epl');
+  }
   if (slug === 'avarkomy') aliases.add('аварком');
   if (slug === 'gazpromneft') aliases.add('газпром');
+  if (slug === 'gazpromneft') aliases.add('гпн');
   if (slug === 'belka-surge') {
     aliases.add('белка');
     aliases.add('surge');
