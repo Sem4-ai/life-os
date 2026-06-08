@@ -12,6 +12,7 @@ const healthPath = new URL('../health.md', import.meta.url);
 const inboxPath = new URL('../inbox.md', import.meta.url);
 const projectsPath = new URL('../projects.md', import.meta.url);
 const meetingInboxPath = new URL('../meeting-inbox', import.meta.url);
+const telegramStatePath = new URL('../telegram-state.json', import.meta.url);
 const todoistStatePath = new URL('../todoist-state.json', import.meta.url);
 const envPath = new URL('../.env', import.meta.url);
 const obsidianVaultPath = '/Users/grachev90/Library/Mobile Documents/iCloud~md~obsidian/Documents/life-os';
@@ -33,6 +34,10 @@ const serverAgents = [
   {
     label: 'com.lifeos.git-save',
     plist: `${launchAgentDir}/com.lifeos.git-save.plist`
+  },
+  {
+    label: 'com.lifeos.telegram',
+    plist: `${launchAgentDir}/com.lifeos.telegram.plist`
   }
 ];
 const categories = ['Work', 'Career', 'Relationship', 'Family', 'Health', 'Home'];
@@ -143,6 +148,31 @@ async function main() {
     return;
   }
 
+  if (domain === 'telegram' && action === 'send') {
+    await telegramSend(rest.join(' ').trim());
+    return;
+  }
+
+  if (domain === 'telegram' && action === 'poll') {
+    await telegramPollOnce();
+    return;
+  }
+
+  if (domain === 'telegram' && action === 'poll-loop') {
+    await telegramPollLoop();
+    return;
+  }
+
+  if (domain === 'telegram' && action === 'status') {
+    await telegramStatus();
+    return;
+  }
+
+  if (domain === 'telegram' && action === 'agent' && rest[0] === 'install') {
+    await installTelegramAgent();
+    return;
+  }
+
   if (domain === 'todoist' && action === 'pull') {
     await pullTodoist();
     return;
@@ -208,6 +238,10 @@ Commands:
   npm run lifeos -- health latest
   npm run lifeos -- obsidian sync
   npm run lifeos -- meeting new project-slug "Meeting title"
+  npm run lifeos -- telegram status
+  npm run lifeos -- telegram send "text"
+  npm run lifeos -- telegram poll
+  npm run lifeos -- telegram agent install
   npm run lifeos -- todoist projects
   npm run lifeos -- todoist list
   npm run lifeos -- todoist pull
@@ -220,6 +254,7 @@ Commands:
 Environment:
   Copy .env.example to .env and fill TODOIST_API_TOKEN.
   TODOIST_PROJECT_ID and TODOIST_SECTION_ID are optional.
+  For Telegram, fill TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.
 `);
 }
 
