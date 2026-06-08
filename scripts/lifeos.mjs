@@ -690,9 +690,16 @@ async function syncCalendar() {
   const annotatedEvents = events
     .map((event) => annotateCalendarEvent(event, projects))
     .sort((left, right) => left.start.localeCompare(right.start));
+  const existing = await safeRead(calendarPath);
+  const next = formatCalendarFile(annotatedEvents);
 
-  await writeFile(calendarPath, formatCalendarFile(annotatedEvents), 'utf8');
-  await syncObsidian();
+  if (normalizeCalendarForCompare(existing) !== normalizeCalendarForCompare(next)) {
+    await writeFile(calendarPath, next, 'utf8');
+    await syncObsidian();
+  } else {
+    console.log('Calendar unchanged.');
+  }
+
   console.log(`Calendar sync complete. Events: ${annotatedEvents.length}.`);
 }
 
@@ -866,6 +873,14 @@ function dedupeCalendarEvents(events) {
   }
 
   return unique;
+}
+
+function normalizeCalendarForCompare(content) {
+  return content
+    .split('\n')
+    .filter((line) => !line.startsWith('Обновлено: '))
+    .join('\n')
+    .trim();
 }
 
 function formatEventTime(value) {
