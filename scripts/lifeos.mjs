@@ -693,9 +693,17 @@ async function syncCalendar() {
   const existing = await safeRead(calendarPath);
   const next = formatCalendarFile(annotatedEvents);
 
+  if (annotatedEvents.length === 0 && calendarHasEvents(existing)) {
+    throw new Error('Calendar sync returned 0 events while calendar.md already has events. Keeping existing calendar.md to avoid data loss.');
+  }
+
   if (normalizeCalendarForCompare(existing) !== normalizeCalendarForCompare(next)) {
     await writeFile(calendarPath, next, 'utf8');
-    await syncObsidian();
+    try {
+      await syncObsidian();
+    } catch (error) {
+      console.warn(`Calendar updated, but Obsidian sync was skipped: ${error.message}`);
+    }
   } else {
     console.log('Calendar unchanged.');
   }
@@ -764,7 +772,7 @@ if status == .notDetermined {
     fputs("Calendar access was not granted.\\n", stderr)
     exit(2)
   }
-} else if ![3, 4].contains(status.rawValue) {
+} else if status.rawValue != 3 {
   fputs("Calendar access is not authorized. Status: \\(status.rawValue)\\n", stderr)
   exit(2)
 }
@@ -889,6 +897,12 @@ function normalizeCalendarForCompare(content) {
     .filter((line) => !line.startsWith('Обновлено: '))
     .join('\n')
     .trim();
+}
+
+function calendarHasEvents(content) {
+  return content
+    .split('\n')
+    .some((line) => line.startsWith('- ') && !line.includes('Calendar sync не нашел событий'));
 }
 
 function formatEventTime(value) {

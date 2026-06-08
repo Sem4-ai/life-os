@@ -64,7 +64,7 @@ Git хранит историю изменений и позволяет без�
 npm run lifeos -- calendar sync
 ```
 
-Забирает события из macOS Calendar за диапазон вчера -> следующие 14 дней, привязывает их к проектам по названию/месту/календарю и обновляет `calendar.md`.
+Забирает события из macOS Calendar через EventKit за диапазон вчера -> следующие 14 дней, привязывает их к проектам по названию/месту/календарю и обновляет `calendar.md`.
 
 ```bash
 npm run lifeos -- calendar today
@@ -78,7 +78,7 @@ npm run lifeos -- calendar agent install
 
 Устанавливает фоновый агент `com.lifeos.calendar-sync`, который обновляет календарь раз в 3 часа.
 
-Если macOS не дает доступ к Calendar, нужно разрешить Terminal/Node доступ в `System Settings -> Privacy & Security -> Automation` или `Calendars`.
+Если macOS не дает доступ к Calendar, нужно разрешить Terminal/Node/Swift доступ в `System Settings -> Privacy & Security -> Calendars`. Ручной запуск может иметь доступ отдельно от фонового `launchd`-агента.
 
 Правило: календарные события сами по себе не становятся задачами. После встречи запись и расшифровка обрабатываются отдельно через `meeting-inbox/`.
 
