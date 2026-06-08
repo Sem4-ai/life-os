@@ -763,6 +763,10 @@ for (const calendar of Calendar.calendars()) {
     const startDate = event.startDate();
     const endDate = event.endDate();
 
+    if (!startDate || startDate < from || startDate > to) {
+      continue;
+    }
+
     events.push({
       title: readValue(() => event.summary()),
       start: startDate ? startDate.toISOString() : '',
@@ -800,6 +804,7 @@ function annotateCalendarEvent(event, projects) {
 
 function formatCalendarFile(events) {
   const generatedAt = new Date().toISOString();
+  const uniqueEvents = dedupeCalendarEvents(events);
   const lines = [
     '# Calendar',
     '',
@@ -811,7 +816,7 @@ function formatCalendarFile(events) {
     ''
   ];
 
-  const eventsByDate = groupBy(events, (event) => event.start.slice(0, 10));
+  const eventsByDate = groupBy(uniqueEvents, (event) => event.start.slice(0, 10));
 
   for (const date of Object.keys(eventsByDate).sort()) {
     lines.push(`## ${date}`);
@@ -829,7 +834,7 @@ function formatCalendarFile(events) {
     lines.push('');
   }
 
-  if (events.length === 0) {
+  if (uniqueEvents.length === 0) {
     lines.push('## Нет событий');
     lines.push('');
     lines.push('- Calendar sync не нашел событий в диапазоне вчера -> следующие 14 дней.');
@@ -837,6 +842,30 @@ function formatCalendarFile(events) {
   }
 
   return lines.join('\n');
+}
+
+function dedupeCalendarEvents(events) {
+  const seen = new Set();
+  const unique = [];
+
+  for (const event of events) {
+    const key = [
+      event.start,
+      event.end,
+      event.title,
+      event.calendar,
+      event.location
+    ].join('|');
+
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    unique.push(event);
+  }
+
+  return unique;
 }
 
 function formatEventTime(value) {
