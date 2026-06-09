@@ -12,6 +12,7 @@ const healthPath = new URL('../health.md', import.meta.url);
 const inboxPath = new URL('../inbox.md', import.meta.url);
 const projectsPath = new URL('../projects.md', import.meta.url);
 const meetingInboxPath = new URL('../meeting-inbox', import.meta.url);
+const notionStatePath = new URL('../notion-state.json', import.meta.url);
 const telegramStatePath = new URL('../telegram-state.json', import.meta.url);
 const todoistStatePath = new URL('../todoist-state.json', import.meta.url);
 const envPath = new URL('../.env', import.meta.url);
@@ -148,6 +149,11 @@ async function main() {
     return;
   }
 
+  if (domain === 'notion' && action === 'sync') {
+    await syncNotion();
+    return;
+  }
+
   if (domain === 'telegram' && action === 'send') {
     await telegramSend(rest.join(' ').trim());
     return;
@@ -238,6 +244,7 @@ Commands:
   npm run lifeos -- health latest
   npm run lifeos -- obsidian sync
   npm run lifeos -- meeting new project-slug "Meeting title"
+  npm run lifeos -- notion sync
   npm run lifeos -- telegram status
   npm run lifeos -- telegram send "text"
   npm run lifeos -- telegram poll
@@ -255,6 +262,7 @@ Environment:
   Copy .env.example to .env and fill TODOIST_API_TOKEN.
   TODOIST_PROJECT_ID and TODOIST_SECTION_ID are optional.
   For Telegram, fill TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.
+  For Notion, fill NOTION_API_TOKEN and NOTION_PARENT_PAGE_ID.
 `);
 }
 
@@ -717,6 +725,320 @@ async function gitSync() {
   await run('git', ['pull', '--ff-only']);
   await run('git', ['status', '--short']);
   console.log('Review changes, then commit with git when ready.');
+}
+
+async function syncNotion() {
+  const env = await loadEnv();
+  const token = requireEnv(env, 'NOTION_API_TOKEN');
+  const parentPageId = normalizeNotionId(requireEnv(env, 'NOTION_PARENT_PAGE_ID'));
+  const projects = await getProjectNotes();
+  const todoistTasks = await getTodoistTasksForDashboard();
+  const calendarContent = await safeRead(calendarPath);
+  const state = await loadNotionState();
+
+  state.dashboardPageId = await upsertNotionPage({
+    token,
+    parentPageId,
+    pageId: state.dashboardPageId,
+    title: 'Life OS Projects'
+  });
+
+  await replaceNotionPageBlocks(
+    token,
+    state.dashboardPageId,
+    notionDashboardBlocks(projects, todoistTasks, calendarContent)
+  );
+
+  state.projectPages = state.projectPages || {};
+
+  for (const project of projects) {
+    state.projectPages[project.slug] = await upsertNotionPage({
+      token,
+      parentPageId: state.dashboardPageId,
+      pageId: state.projectPages[project.slug],
+      title: project.title
+    });
+
+    await replaceNotionPageBlocks(
+      token,
+      state.projectPages[project.slug],
+      notionProjectBlocks(project, findProjectTasks(todoistTasks, project), calendarContent)
+    );
+  }
+
+  await writeFile(notionStatePath, `${JSON.stringify(state, null, 2)}\n`, 'utf8');
+  console.log(`Notion sync complete. Projects: ${projects.length}.`);
+}
+
+async function loadNotionState() {
+  const content = await safeRead(notionStatePath);
+
+  if (!content.trim()) {
+    return { dashboardPageId: null, projectPages: {} };
+  }
+
+  try {
+    const state = JSON.parse(content);
+    return {
+      dashboardPageId: state.dashboardPageId || null,
+      projectPages: state.projectPages || {}
+    };
+  } catch {
+    return { dashboardPageId: null, projectPages: {} };
+  }
+}
+
+async function upsertNotionPage({ token, parentPageId, pageId, title }) {
+  if (pageId) {
+    try {
+      await notionRequest(token, `/pages/${encodeURIComponent(pageId)}`, {
+        method: 'PATCH',
+        body: {
+          properties: {
+            title: notionTitle(title)
+          }
+        }
+      });
+      return pageId;
+    } catch (error) {
+      console.warn(`Notion page update failed, creating a new page: ${error.message}`);
+    }
+  }
+
+  const page = await notionRequest(token, '/pages', {
+    method: 'POST',
+    body: {
+      parent: {
+        page_id: parentPageId
+      },
+      properties: {
+        title: notionTitle(title)
+      }
+    }
+  });
+
+  return page.id;
+}
+
+async function replaceNotionPageBlocks(token, pageId, blocks) {
+  const children = await getAllNotionBlockChildren(token, pageId);
+
+  for (const child of children) {
+    await notionRequest(token, `/blocks/${encodeURIComponent(child.id)}`, {
+      method: 'PATCH',
+      body: {
+        archived: true
+      }
+    });
+  }
+
+  for (const batch of chunk(blocks, 80)) {
+    await notionRequest(token, `/blocks/${encodeURIComponent(pageId)}/children`, {
+      method: 'PATCH',
+      body: {
+        children: batch
+      }
+    });
+  }
+}
+
+async function getAllNotionBlockChildren(token, blockId) {
+  const blocks = [];
+  let cursor = null;
+
+  do {
+    const query = new URLSearchParams({ page_size: '100' });
+
+    if (cursor) {
+      query.set('start_cursor', cursor);
+    }
+
+    const page = await notionRequest(token, `/blocks/${encodeURIComponent(blockId)}/children?${query.toString()}`);
+    blocks.push(...page.results);
+    cursor = page.next_cursor;
+  } while (cursor);
+
+  return blocks;
+}
+
+function notionDashboardBlocks(projects, todoistTasks, calendarContent) {
+  const today = new Date().toISOString().slice(0, 10);
+  const attentionItems = projects
+    .map((project) => projectAttention(project, today))
+    .filter(Boolean);
+  const blocks = [
+    notionParagraph(`Обновлено из Life OS: ${new Date().toISOString()}`),
+    notionHeading(2, 'Требуют внимания'),
+    ...notionBullets(attentionItems.length ? attentionItems : ['Критичных сигналов нет.']),
+    notionHeading(2, 'Сегодня'),
+    ...notionBullets(calendarEventsForDate(calendarContent, today)),
+    notionHeading(2, 'Проекты')
+  ];
+
+  for (const project of projects) {
+    const tasks = findProjectTasks(todoistTasks, project);
+    blocks.push(
+      notionHeading(3, project.title),
+      notionBulleted(`${project.status} | дедлайн: ${project.deadline}`),
+      notionBulleted(`Следующий шаг: ${project.nextStep}`),
+      notionBulleted(`Задачи: ${formatInlineList(tasks)}`)
+    );
+  }
+
+  return blocks;
+}
+
+function notionProjectBlocks(project, tasks, calendarContent) {
+  const blocks = [
+    notionParagraph(`Обновлено из Life OS: ${new Date().toISOString()}`),
+    notionHeading(2, 'Статус'),
+    notionBulleted(`Статус: ${project.status}`),
+    notionBulleted(`Дедлайн: ${project.deadline}`),
+    notionBulleted(`Результат: ${project.result}`),
+    notionBulleted(`Следующий шаг: ${project.nextStep}`),
+    notionHeading(2, 'Задачи'),
+    ...notionBullets(tasks.length ? tasks : ['Нет связанных задач Todoist.']),
+    notionHeading(2, 'Риски'),
+    ...notionBullets(project.risks.length ? project.risks : ['Нет данных.']),
+    notionHeading(2, 'Открытые вопросы'),
+    ...notionBullets(project.openQuestions.length ? project.openQuestions : ['Нет данных.']),
+    notionHeading(2, 'Последние решения'),
+    ...notionBullets(project.decisions.length ? project.decisions : ['Нет данных.']),
+    notionHeading(2, 'Календарь'),
+    ...notionBullets(calendarEventsForProject(calendarContent, project)),
+    notionHeading(2, 'Источник'),
+    notionParagraph(project.relativePath)
+  ];
+
+  return blocks;
+}
+
+function calendarEventsForDate(content, date) {
+  const lines = content.split('\n');
+  const events = [];
+  let inDate = false;
+
+  for (const line of lines) {
+    if (line === `## ${date}`) {
+      inDate = true;
+      continue;
+    }
+
+    if (inDate && line.startsWith('## ')) {
+      break;
+    }
+
+    if (inDate && line.startsWith('- ')) {
+      events.push(stripNotionMarkdownLinks(line.slice(2).trim()));
+    }
+  }
+
+  return events.length ? events : ['На сегодня событий в calendar.md нет.'];
+}
+
+function calendarEventsForProject(content, project) {
+  const normalizedTitle = project.title.toLowerCase();
+  const events = content
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith('- '))
+    .map((line) => line.slice(2).trim())
+    .filter((line) => line.toLowerCase().includes(normalizedTitle))
+    .map(stripNotionMarkdownLinks)
+    .slice(0, 10);
+
+  return events.length ? events : ['Нет связанных событий в календаре.'];
+}
+
+function stripNotionMarkdownLinks(value) {
+  return value.replace(/\[\[([^\]|]+)\|([^\]]+)\]\]/g, '$2');
+}
+
+function notionTitle(value) {
+  return {
+    title: [{ type: 'text', text: { content: truncateNotionText(value, 2000) } }]
+  };
+}
+
+function notionHeading(level, content) {
+  const type = `heading_${level}`;
+  return {
+    object: 'block',
+    type,
+    [type]: {
+      rich_text: notionRichText(content)
+    }
+  };
+}
+
+function notionParagraph(content) {
+  return {
+    object: 'block',
+    type: 'paragraph',
+    paragraph: {
+      rich_text: notionRichText(content)
+    }
+  };
+}
+
+function notionBulleted(content) {
+  return {
+    object: 'block',
+    type: 'bulleted_list_item',
+    bulleted_list_item: {
+      rich_text: notionRichText(content)
+    }
+  };
+}
+
+function notionBullets(items) {
+  return items.map((item) => notionBulleted(item));
+}
+
+function notionRichText(content) {
+  const text = truncateNotionText(String(content || ''), 2000);
+  return text ? [{ type: 'text', text: { content: text } }] : [];
+}
+
+function truncateNotionText(value, maxLength) {
+  return value.length > maxLength ? `${value.slice(0, maxLength - 1)}…` : value;
+}
+
+async function notionRequest(token, path, options = {}) {
+  const response = await fetch(`https://api.notion.com/v1${path}`, {
+    method: options.method || 'GET',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+      'Notion-Version': '2022-06-28'
+    },
+    body: options.body ? JSON.stringify(removeUndefined(options.body)) : undefined
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`Notion API error ${response.status}: ${body}`);
+  }
+
+  if (response.status === 204) {
+    return null;
+  }
+
+  return response.json();
+}
+
+function normalizeNotionId(value) {
+  return String(value).trim().replace(/-/g, '');
+}
+
+function chunk(items, size) {
+  const chunks = [];
+
+  for (let index = 0; index < items.length; index += size) {
+    chunks.push(items.slice(index, index + size));
+  }
+
+  return chunks;
 }
 
 async function syncCalendar() {
