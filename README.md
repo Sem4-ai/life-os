@@ -189,9 +189,13 @@ TELEGRAM_API_HASH=
 TELEGRAM_PHONE=
 TELEGRAM_MENTION_NAMES=
 TELEGRAM_TELETHON_SESSION=.private/telegram-telethon
+TELEGRAM_TELETHON_PROXY=
+TELEGRAM_USE_IPV6=true
 ```
 
 `TELEGRAM_MENTION_NAMES` - список username без `@`, через запятую. Если у аккаунта есть username, он добавится автоматически.
+
+`TELEGRAM_TELETHON_PROXY` нужен только если прямой MTProto-доступ не проходит. Формат: `socks5://host:port` или `socks5://user:pass@host:port`.
 
 3. Выполнить первый вход:
 

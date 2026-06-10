@@ -11,6 +11,7 @@ from pathlib import Path
 
 try:
     from telethon import TelegramClient
+    from telethon.network.connection.tcpabridged import ConnectionTcpAbridged
 except ImportError:
     print("Telethon is not installed. Run: python3 -m pip install --user telethon", file=sys.stderr)
     sys.exit(1)
@@ -176,7 +177,40 @@ async def get_client(env):
     if not session_path.is_absolute():
         session_path = ROOT / session_path
     session_path.parent.mkdir(parents=True, exist_ok=True)
-    return TelegramClient(str(session_path), api_id, api_hash)
+    proxy = parse_proxy(env.get("TELEGRAM_TELETHON_PROXY", ""))
+    return TelegramClient(
+        str(session_path),
+        api_id,
+        api_hash,
+        connection=ConnectionTcpAbridged,
+        proxy=proxy,
+        timeout=12,
+        connection_retries=2,
+        use_ipv6=env.get("TELEGRAM_USE_IPV6", "true").strip().lower() not in {"0", "false", "no"},
+    )
+
+
+def parse_proxy(raw_value):
+    value = raw_value.strip()
+    if not value:
+        return None
+
+    match = re.match(r"^(socks5|socks4|http)://(?:(.*?):(.*?)@)?([^:/]+):(\d+)$", value, re.I)
+    if not match:
+        raise RuntimeError("TELEGRAM_TELETHON_PROXY must look like socks5://host:port or socks5://user:pass@host:port.")
+
+    scheme, username, password, host, port = match.groups()
+    try:
+        import socks
+    except ImportError as exc:
+        raise RuntimeError("Proxy support requires PySocks. Run: python3 -m pip install --user PySocks") from exc
+
+    proxy_types = {
+        "socks5": socks.SOCKS5,
+        "socks4": socks.SOCKS4,
+        "http": socks.HTTP,
+    }
+    return (proxy_types[scheme.lower()], host, int(port), True, username, password)
 
 
 async def login(args):
