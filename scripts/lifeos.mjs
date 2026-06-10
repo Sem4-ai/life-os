@@ -39,6 +39,10 @@ const serverAgents = [
   {
     label: 'com.lifeos.telegram',
     plist: `${launchAgentDir}/com.lifeos.telegram.plist`
+  },
+  {
+    label: 'com.lifeos.telegram-user',
+    plist: `${launchAgentDir}/com.lifeos.telegram-user.plist`
   }
 ];
 const categories = ['Work', 'Career', 'Relationship', 'Family', 'Health', 'Home'];
@@ -179,6 +183,31 @@ async function main() {
     return;
   }
 
+  if (domain === 'telegram-user' && action === 'login') {
+    await telegramUserClient(['login']);
+    return;
+  }
+
+  if (domain === 'telegram-user' && action === 'poll') {
+    await telegramUserClient(['poll', ...rest]);
+    return;
+  }
+
+  if (domain === 'telegram-user' && action === 'monitor') {
+    await telegramUserClient(['monitor', ...rest]);
+    return;
+  }
+
+  if (domain === 'telegram-user' && action === 'status') {
+    await telegramUserClient(['status']);
+    return;
+  }
+
+  if (domain === 'telegram-user' && action === 'agent' && rest[0] === 'install') {
+    await installTelegramUserAgent();
+    return;
+  }
+
   if (domain === 'todoist' && action === 'pull') {
     await pullTodoist();
     return;
@@ -249,6 +278,11 @@ Commands:
   npm run lifeos -- telegram send "text"
   npm run lifeos -- telegram poll
   npm run lifeos -- telegram agent install
+  npm run lifeos -- telegram-user status
+  npm run lifeos -- telegram-user login
+  npm run lifeos -- telegram-user poll
+  npm run lifeos -- telegram-user monitor
+  npm run lifeos -- telegram-user agent install
   npm run lifeos -- todoist projects
   npm run lifeos -- todoist list
   npm run lifeos -- todoist pull
@@ -262,6 +296,7 @@ Environment:
   Copy .env.example to .env and fill TODOIST_API_TOKEN.
   TODOIST_PROJECT_ID and TODOIST_SECTION_ID are optional.
   For Telegram, fill TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.
+  For Telegram user monitor, fill TELEGRAM_API_ID, TELEGRAM_API_HASH and TELEGRAM_PHONE.
   For Notion, fill NOTION_API_TOKEN and NOTION_PARENT_PAGE_ID.
 `);
 }
@@ -1684,6 +1719,10 @@ async function telegramStatus() {
   console.log('Tip: send /id to the bot, then run `npm run lifeos -- telegram poll` to get the chat id.');
 }
 
+async function telegramUserClient(commandArgs) {
+  await run('python3', ['scripts/telegram_telethon_monitor.py', ...commandArgs]);
+}
+
 async function handleTelegramText(rawText, incoming) {
   const text = rawText.trim();
 
@@ -2316,6 +2355,54 @@ async function installTelegramAgent() {
   await bootstrapAgent(agent);
   await run('launchctl', ['kickstart', '-k', `gui/${userId}/${agent.label}`]);
   console.log('Telegram agent installed. Poll interval: 5 seconds.');
+}
+
+async function installTelegramUserAgent() {
+  const plist = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key>
+    <string>/Users/grachev90</string>
+    <key>PATH</key>
+    <string>/Users/grachev90/.nvm/versions/node/v24.14.0/bin:/Users/grachev90/Library/Python/3.9/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+  <key>Label</key>
+  <string>com.lifeos.telegram-user</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>${escapeXml(process.execPath)}</string>
+    <string>scripts/lifeos.mjs</string>
+    <string>telegram-user</string>
+    <string>monitor</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardErrorPath</key>
+  <string>/Users/grachev90/Library/Logs/lifeos-telegram-user.err.log</string>
+  <key>StandardOutPath</key>
+  <string>/Users/grachev90/Library/Logs/lifeos-telegram-user.out.log</string>
+  <key>WorkingDirectory</key>
+  <string>/Users/grachev90/life-os</string>
+</dict>
+</plist>
+`;
+
+  const agent = serverAgents.find((item) => item.label === 'com.lifeos.telegram-user');
+  await writeFile(agent.plist, plist, 'utf8');
+
+  const status = await getAgentStatus(agent);
+  if (status !== 'not loaded') {
+    await bootoutAgent(agent);
+  }
+
+  await bootstrapAgent(agent);
+  await run('launchctl', ['kickstart', '-k', `gui/${userId}/${agent.label}`]);
+  console.log('Telegram user monitor installed. Poll interval: 5 minutes.');
 }
 
 function escapeXml(value) {

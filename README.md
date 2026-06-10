@@ -165,6 +165,72 @@ npm run lifeos -- server off
 
 Обычный текст без команды сохраняется в `inbox.md`.
 
+## Telegram user monitor
+
+Для чтения личных входящих сообщений и призывов в групповых чатах используется отдельный Telethon-клиент. Это не бот: он авторизуется как твой Telegram-аккаунт и поэтому чувствительнее по безопасности.
+
+Что делает монитор:
+
+- забирает входящие личные сообщения;
+- забирает сообщения из групп, где тебя явно упомянули или ответили на твое сообщение;
+- складывает их в локальную очередь `.private/telegram-review.md`;
+- не отправляет ответы сам.
+
+`.private/` добавлен в `.gitignore`, чтобы личные переписки и session-файл не попадали в git.
+
+### Настройка Telethon
+
+1. Открыть [my.telegram.org](https://my.telegram.org), создать приложение и получить `api_id` / `api_hash`.
+2. Добавить в `.env`:
+
+```text
+TELEGRAM_API_ID=
+TELEGRAM_API_HASH=
+TELEGRAM_PHONE=
+TELEGRAM_MENTION_NAMES=
+TELEGRAM_TELETHON_SESSION=.private/telegram-telethon
+```
+
+`TELEGRAM_MENTION_NAMES` - список username без `@`, через запятую. Если у аккаунта есть username, он добавится автоматически.
+
+3. Выполнить первый вход:
+
+```bash
+npm run lifeos -- telegram-user login
+```
+
+Telegram пришлет код. Если включен облачный пароль Telegram, Telethon спросит его в терминале.
+
+4. Проверить статус:
+
+```bash
+npm run lifeos -- telegram-user status
+```
+
+5. Разово забрать новые сообщения:
+
+```bash
+npm run lifeos -- telegram-user poll
+```
+
+6. Включить фонового агента:
+
+```bash
+npm run lifeos -- telegram-user agent install
+```
+
+Агент `com.lifeos.telegram-user` проверяет Telegram раз в 5 минут и пишет только в локальную очередь.
+
+### Как разбирать очередь
+
+Попроси ассистента:
+
+```text
+Разбери .private/telegram-review.md и предложи ответы
+```
+
+Правило разбора: если контекста мало или уверенность ниже 90%, нужно сначала смотреть LifeOS-контекст, календарь, проекты и договоренности. Если после этого уверенность вышла на плато, ответ должен явно сказать, чего не хватает.
+
 ## Meeting workflow
 
 Встречи записываются на iPhone, расшифровываются в текст и попадают в `meeting-inbox/`.
